@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#07121c" />
+    <meta name="description" content="Кеплер: Дрейф — космическая экспедиция. Маневрируйте в поясе астероидов, добывайте руду и улучшайте корабль." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" as="image" href="/images/kepler-loading.webp" fetchpriority="high" />
+    <link rel="preload" as="font" href="/fonts/exo2.ttf" type="font/ttf" crossorigin />
+    <link rel="stylesheet" href="/src/loading.css" />
+    <title>Кеплер: Дрейф — орбитальная экспедиция</title>
+  </head>
+  <body>
+    <div id="app" inert></div>
+    <section id="loading" class="loading-screen" aria-label="Подготовка экспедиции" aria-busy="true" data-state="loading">
+      <img id="loading-art" class="loading-art" src="/images/kepler-loading.webp" alt="" fetchpriority="high" decoding="async" />
+      <div class="loading-shade" aria-hidden="true"></div>
+      <header class="loading-header">
+        <div class="loading-identity"><img src="/favicon.svg" alt="" width="36" height="36" /><span>ОРБИТАЛЬНАЯ ЭКСПЕДИЦИЯ</span></div>
+        <span class="loading-location">ПОЯС КЕПЛЕРА <i aria-hidden="true"></i></span>
+      </header>
+      <div class="loading-title">
+        <h1>Кеплер:<br /><strong>Дрейф</strong></h1>
+        <p>На краю известного космоса<br />богатство скрывается в камне.</p>
+      </div>
+      <div class="loading-console">
+        <div class="loading-readout">
+          <div class="loading-status">
+            <svg class="loading-orbit" viewBox="0 0 44 44" fill="none" aria-hidden="true">
+              <circle cx="22" cy="22" r="19" stroke="currentColor" opacity=".2" />
+              <g class="loading-orbit-spin"><path d="M22 3a19 19 0 0 1 19 19M22 41A19 19 0 0 1 3 22" stroke="currentColor" stroke-width="2" stroke-linecap="round" /><circle cx="22" cy="3" r="2.5" fill="currentColor" /></g>
+              <path d="m22 13 6 12-6-3-6 3 6-12Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              <path d="M20 28v3m4-3v3" stroke="currentColor" stroke-linecap="round" />
+            </svg>
+            <div><span class="loading-label">ЗАГРУЗКА СЦЕНЫ</span><p id="loading-status" role="status" aria-live="polite">Готовим экспедицию</p></div>
+          </div>
+          <span class="loading-percentage" aria-hidden="true"><b id="loading-percent">0</b><span>%</span></span>
+        </div>
+        <div id="loading-progress" class="loading-progress" role="progressbar" aria-label="Подготовка сцены" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="loading-fill"></span></div>
+        <ol class="loading-stages" aria-label="Этапы подготовки"><li class="active">Ресурсы</li><li>Пояс астероидов</li><li>Системы корабля</li><li>Готовность к полёту</li></ol>
+        <div class="loading-footer"><p><kbd>Q</kbd><span class="loading-tip-keys">Автоогонь включён. A / D + пробел — бочка.</span><span class="loading-tip-touch">Автоогонь включён. Маневрируйте джойстиком.</span></p><span>KEP–01 <i></i> РАЗВЕДЧИК</span></div>
+        <p id="loading-error" class="loading-error" hidden></p>
+        <button id="retry-loading" class="loading-retry" hidden>Попробовать снова <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10" /></svg></button>
+      </div>
+      <noscript class="loading-noscript">Для запуска игры включите JavaScript в браузере.</noscript>
+    </section>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

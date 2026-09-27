@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<title>Кеплер — проверка кадров</title>
+<style>
+  body { margin:0; background:#020811; color:white; font:14px monospace; }
+  #scene { width:100vw; height:100vh; position:absolute; inset:0; }
+  #scene canvas { display:block; width:100%; height:100%; }
+  aside { position:fixed; z-index:1; top:12px; left:12px; padding:16px; background:#081522ee; max-width:90vw; }
+  button { padding:10px; margin:4px; } pre { white-space:pre-wrap; max-height:40vh; overflow:auto; }
+</style>
+<div id="scene"></div>
+<aside>
+  <strong>Проверка реальных кадров WebGL</strong>
+  <div><button id="current" disabled>Текущий рендер</button><button id="legacy-msaa" disabled>Старый MSAA</button><button id="no-bloom" disabled>Без bloom</button></div>
+  <pre id="result" role="status">Загрузка сцены…</pre>
+</aside>
+<script type="module" src="/tests/render-probe.ts"></script>
+</html>

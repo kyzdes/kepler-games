@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Кеплер — проверка полёта</title>
+  <style>
+    body { margin:0; background:#071019; color:#eef5f8; font:14px/1.5 monospace; }
+    #scene { position:fixed; inset:0; }
+    #panel { position:relative; margin:16px; padding:16px; max-width:760px; background:#071019ed; }
+    button { padding:10px 14px; font:inherit; cursor:pointer; margin:3px; }
+    pre { white-space:pre-wrap; }
+    body.preview #panel { max-width:unset; width:fit-content; font-size:11px; }
+    body.preview h1, body.preview pre { display:none; }
+  </style>
+</head>
+<body>
+  <div id="scene"></div>
+  <section id="panel">
+    <h1>Проверка новых механик полёта</h1>
+    <button id="run" disabled>Проверить механики</button>
+    <button id="storm" disabled>Молния</button>
+    <button id="roll-left" disabled>Бочка влево</button>
+    <button id="roll-right" disabled>Бочка вправо</button>
+    <pre id="result" role="status">Подготовка игровой сцены…</pre>
+  </section>
+  <script type="module" src="/tests/flight-probe.ts"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Кеплер — проверка взрывов</title>
+  <style>
+    body { margin:32px; background:#071019; color:#eef5f8; font:15px/1.5 monospace; }
+    button { padding:12px 18px; font:inherit; }
+    pre { white-space:pre-wrap; }
+    audio { display:block; margin:12px 0; }
+  </style>
+</head>
+<body>
+  <h1>Звук разрушения астероидов</h1>
+  <button id="run">Проверить звук</button>
+  <div id="samples"></div>
+  <pre id="result" role="status">Готово</pre>
+  <script type="module" src="/tests/audio-probe.ts"></script>
+</body>
+</html>

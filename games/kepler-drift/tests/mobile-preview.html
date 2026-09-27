@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="UTF-8" />
+<title>Кеплер — мобильная проверка 390 × 844</title>
+<style>
+  body { margin:0; background:#253444; color:#fff; font:14px sans-serif; }
+  iframe { display:block; width:390px; height:844px; border:0; }
+  aside { position:fixed; left:414px; top:24px; max-width:350px; line-height:1.6; }
+</style>
+<iframe title="Игра 390 × 844"></iframe>
+<aside>Проверка реальной страницы игры при 390 × 844. Сенсорная компоновка применяется из исходных правил pointer: coarse. Это проверка размеров и элементов управления, не производительности телефона.</aside>
+<script type="module">
+  const frame=document.querySelector('iframe');
+  const params=new URLSearchParams(location.search), preview=new URLSearchParams();
+  if(['1','2','3'].includes(params.get('sector-preview'))) preview.set('sector-preview',params.get('sector-preview'));
+  if(['-1','1'].includes(params.get('roll'))) preview.set('roll',params.get('roll'));
+  for(const flag of ['boost','armory']) if(params.has(flag)) preview.set(flag,'1');
+  if(params.has('ore')) preview.set('ore',String(Math.max(0,Math.min(500,Number(params.get('ore')) || 0))));
+  frame.src=`/${preview.size?'?'+preview.toString():''}`;
+  frame.addEventListener('load',()=>{
+    const doc=frame.contentDocument;
+    const style=doc.createElement('style');
+    for(const sheet of doc.styleSheets) {
+      for(const rule of sheet.cssRules) {
+        if(rule instanceof frame.contentWindow.CSSMediaRule && rule.conditionText==='(pointer: coarse)') {
+          style.textContent += [...rule.cssRules].map(r=>r.cssText).join('\n');
+        }
+      }
+    }
+    doc.head.appendChild(style);
+  });
+</script>
