@@ -42,11 +42,13 @@ test('sectors preload distinct planets and retain the original shader sky in the
   assert.equal(new Set(SECTOR_VISUALS.map(v=>v.planet)).size,3);
   assert.equal(new Set(SECTOR_VISUALS.map(v=>v.sky)).size,3);
   assert.equal(SECTOR_TEXTURE_URLS.length,5);
+  assert.equal(SECTOR_VISUALS.length,TOTAL_SECTORS);
+  assert.equal(new Set(SECTOR_VISUALS.map(v=>JSON.stringify(v))).size,TOTAL_SECTORS);
   assert.equal(SECTOR_VISUALS[0].sky,null);
   for(const url of SECTOR_TEXTURE_URLS) assert.ok(existsSync(new URL('../public'+url,import.meta.url)),url);
-  assert.equal(sectorVisual(0),SECTOR_VISUALS[0]); assert.equal(sectorVisual(100),SECTOR_VISUALS[2]);
+  assert.equal(sectorVisual(0),SECTOR_VISUALS[0]); assert.equal(sectorVisual(100),SECTOR_VISUALS[TOTAL_SECTORS-1]);
 });
 
-test('a complete three-sector expedition now lasts three minutes forty-five seconds',()=>{
-  assert.equal(SECTOR_SECONDS,75); assert.equal(SECTOR_SECONDS*TOTAL_SECTORS,225);
+test('a complete six-sector expedition lasts seven minutes thirty seconds',()=>{
+  assert.equal(TOTAL_SECTORS,6); assert.equal(SECTOR_SECONDS,75); assert.equal(SECTOR_SECONDS*TOTAL_SECTORS,450);
 });

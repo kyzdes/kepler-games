@@ -11,12 +11,16 @@ export class GameAudio {
   private readonly engines: OscillatorNode[] = [];
   private flying = false;
   private boosting = false;
+  private cutting = false;
+  private cutterGain: GainNode | null = null;
   start(): void {
     if(!this.context) {
       this.context=new AudioContext();this.master=this.context.createGain();this.master.gain.value=this.muted?0:.25;this.master.connect(this.context.destination);
       this.engine=this.context.createGain();this.engine.gain.value=0;this.engine.connect(this.master);
       this.noise = createExplosionNoise(this.context);
       for(const freq of [48,73]) {const o=this.context.createOscillator();o.type='sine';o.frequency.value=freq;o.connect(this.engine);o.start();this.engines.push(o);}
+      this.cutterGain=this.context.createGain();this.cutterGain.gain.value=0;this.cutterGain.connect(this.master);
+      const beam=this.context.createOscillator();beam.type='triangle';beam.frequency.value=185;beam.connect(this.cutterGain);beam.start();
     }
     void this.context.resume().catch(()=>{});
   }
@@ -38,6 +42,13 @@ export class GameAudio {
     o.onended=()=>{o.disconnect();g.disconnect();};
   }
   shot():void {if(this.context&&this.context.currentTime-this.lastShot>.1){this.lastShot=this.context.currentTime;this.tone(570,110,.11,.12,'triangle');}}
+  plasma():void {this.tone(260,45,.3,.22,'triangle');}
+  cutter():void {this.tone(900,190,.3,.18,'sawtooth');}
+  setCutting(cutting:boolean):void {
+    if(this.cutting===cutting)return;
+    this.cutting=cutting;
+    if(this.context&&this.cutterGain)this.cutterGain.gain.setTargetAtTime(cutting?.085:0,this.context.currentTime,.05);
+  }
   hit():void {this.tone(84,28,.28,.36,'sawtooth');}
   rock(radius=1, pan=0, distance=0):void {
     if(!this.context||!this.master||this.muted)return;

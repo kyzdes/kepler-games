@@ -6,6 +6,9 @@ import type { Game } from './game';
 import { LoadingScreen } from './loading';
 import { SECTORS, TOTAL_SECTORS, UPGRADES, buyUpgrade, upgradeCost, rollUpgrades, WEAPON_UPGRADES } from './state';
 import type { UpgradeId } from './state';
+import { cutterRecharge } from './weapons';
+import type { WeaponId } from './weapons';
+import { sectorHazards } from './hazards';
 
 let best = 0;
 try { const saved = Number(localStorage.getItem('kepler-best-v2')); if (Number.isFinite(saved) && saved >= 0) best = saved; } catch { /* A private browser can disable local storage. */ }
@@ -34,8 +37,10 @@ function phase(g: Game): void {
   $('intro').hidden = g.run.phase !== 'ready';
   $('pause-button').hidden = ['ready','ended','upgrade','armory'].includes(g.run.phase);
   $('armory-button').hidden = !['flying','paused'].includes(g.run.phase);
+  $('weapon-button').hidden = !['flying','paused'].includes(g.run.phase);
   if(g.run.phase==='flying' && g.run.elapsed===0) { resetWeaponHint(); armoryFeedback=''; }
   setText('sector-number', `СЕКТОР ${pad(g.run.sector)}`); setText('sector-name', SECTORS[g.run.sector - 1]);
+  setText('sector-hint', sectorHazards(g.run.sector).hint);
   setText('sector-state', g.run.phase === 'ready' ? 'ОЖИДАНИЕ СТАРТА' : ['paused','armory'].includes(g.run.phase) ? 'ПАУЗА' : 'В ПОЛЁТЕ');
   $('route-stops').querySelectorAll('span').forEach((e, i) => { e.classList.toggle('current', i + 1 === g.run.sector); e.classList.toggle('complete', i + 1 < g.run.sector); });
   if (g.run.phase === 'paused' && !helpOpen) {
@@ -68,13 +73,13 @@ function renderArmory(): void {
   showOverlay(`<section class="shop-panel armory-panel">
     <div class="shop-heading"><div><h1>Оружие корабля.</h1><p>Улучшайте за собранную руду.<br/>Полёт на паузе.</p></div><div class="shop-balance">${icon('gem')}<strong id="armory-ore">${r.ore}</strong><span>ДОСТУПНО РУДЫ</span></div></div>
     <div class="upgrade-grid armory-grid">${WEAPON_UPGRADES.map(id=>{
-      const u=UPGRADES[id], cost=upgradeCost(r,id), installed=id==='multishot' && r.multishot;
+    const u=UPGRADES[id], cost=upgradeCost(r,id), installed=id==='multishot' && r.multishot;
       return `<article class="upgrade-card ${u.color} ${installed?'installed':''}">
         <div class="module-visual">${icon(installed?'check':u.icon)}<span class="module-orbit"></span><span class="module-orbit second"></span></div>
         <h2>${u.name}</h2><div class="module-level">${id==='laser'?`УРОВЕНЬ ${r.levels.laser} → ${r.levels.laser+1}`:installed?'УСТАНОВЛЕН':'ЗАЛП ×3'}</div>
-        <p>${id==='laser'?`Урон ${damage(r.damage)} → ${damage(r.damage*1.35)}. Каждый выстрел сильнее на 35%.`:'Три луча из каждого ствола. Раскалывайте больше астероидов за залп.'}</p>
+        <p>${id==='laser'?`Импульсы: ${damage(r.damage)} → ${damage(r.damage*1.35)} урона. Плазма: ${damage(r.damage*2.5)} → ${damage(r.damage*2.5*1.35)}. Заряд резака: ${damage(cutterRecharge(r.levels.laser))} → ${damage(cutterRecharge(r.levels.laser+1))} с.`:'Три импульса из каждого ствола или три плазменных снаряда. На режущий луч не влияет.'}</p>
         <div class="armory-price">${installed?'Модуль активен':`${icon('gem')} ${cost} руды`}</div>
-        <button class="upgrade-buy" data-weapon="${id}" ${installed||r.ore<cost?'disabled':''} aria-label="${installed?'Тройной импульс установлен':`${id==='laser'?'Улучшить лазер':'Установить тройной импульс'} за ${cost} руды`}">${installed?`${icon('check')} Установлено`:r.ore<cost?`Нужно ещё ${cost-r.ore} руды`:`${id==='laser'?'Улучшить лазер':'Установить'} ${icon('arrow-up-right')}`}</button>
+        <button class="upgrade-buy" data-weapon="${id}" ${installed||r.ore<cost?'disabled':''} aria-label="${installed?'Тройной залп установлен':`${id==='laser'?'Улучшить энергоконтур':'Установить тройной залп'} за ${cost} руды`}">${installed?`${icon('check')} Установлено`:r.ore<cost?`Нужно ещё ${cost-r.ore} руды`:`${id==='laser'?'Улучшить энергоконтур':'Установить'} ${icon('arrow-up-right')}`}</button>
       </article>`;
     }).join('')}</div>
     <p class="armory-feedback" role="status" aria-live="polite">${armoryFeedback}</p>
@@ -84,7 +89,7 @@ function renderArmory(): void {
     const id=button.dataset.weapon as 'laser'|'multishot';
     if(!buyUpgrade(game.run,id)) return;
     game.audio.upgrade();
-    armoryFeedback=id==='laser'?`Лазер улучшен до уровня ${game.run.levels.laser}. Урон увеличен.`:'Тройной импульс установлен. Каждый ствол выпускает три луча.';
+    armoryFeedback=id==='laser'?`Энергоконтур ${game.run.levels.laser}: снаряды мощнее, резак заряжается быстрее.`:'Тройной залп установлен для импульсов и плазмы.';
     renderArmory(); update(game);
     requestAnimationFrame(()=>{
       const next=overlay.querySelector<HTMLButtonElement>(`[data-weapon="${id}"]:not(:disabled)`);
@@ -97,14 +102,31 @@ function renderArmory(): void {
 function showEnd(): void {
   const r = game.run; const newBest = r.mined > best;
   if (newBest) { best = r.mined; try { localStorage.setItem('kepler-best-v2', String(best)); } catch { /* Gameplay works without persistence. */ } }
-  showOverlay(`<section class="end-panel"><div class="panel-symbol ${r.won ? 'success' : ''}">${icon(r.won ? 'orbit' : 'shield')}</div><h1>${r.won ? 'За поясом — звёзды.' : 'Сигнал потерян.'}</h1><p>${r.won ? 'Три сектора позади. Груз доставлен, корабль уцелел.' : 'Корабль остался среди астероидов.<br/>Следующий полёт будет другим.'}</p><dl class="run-results"><div><dt>ДОБЫТО РУДЫ</dt><dd class="gold-text">${r.mined}</dd></div><div><dt>АСТЕРОИДОВ</dt><dd>${r.kills}</dd></div><div><dt>ВРЕМЯ ПОЛЁТА</dt><dd>${time(r.elapsed)}</dd></div></dl><div class="result-note">${newBest ? 'Новый рекорд экспедиции' : `Рекорд: ${best} руды`}<span>Сектор ${r.sector} / ${TOTAL_SECTORS}</span></div><button id="new-run" class="primary-button">Новая экспедиция ${icon('arrow-up-right')}</button></section>`, 'Результаты экспедиции');
+  showOverlay(`<section class="end-panel"><div class="panel-symbol ${r.won ? 'success' : ''}">${icon(r.won ? 'orbit' : 'shield')}</div><h1>${r.won ? 'За поясом — звёзды.' : 'Сигнал потерян.'}</h1><p>${r.won ? `Все ${TOTAL_SECTORS} секторов позади. Груз доставлен, корабль уцелел.` : 'Корабль остался среди астероидов.<br/>Следующий полёт будет другим.'}</p><dl class="run-results"><div><dt>ДОБЫТО РУДЫ</dt><dd class="gold-text">${r.mined}</dd></div><div><dt>АСТЕРОИДОВ</dt><dd>${r.kills}</dd></div><div><dt>ВРЕМЯ ПОЛЁТА</dt><dd>${time(r.elapsed)}</dd></div></dl><div class="result-note">${newBest ? 'Новый рекорд экспедиции' : `Рекорд: ${best} руды`}<span>Сектор ${r.sector} / ${TOTAL_SECTORS}</span></div><button id="new-run" class="primary-button">Новая экспедиция ${icon('arrow-up-right')}</button></section>`, 'Результаты экспедиции');
   $('new-run').onclick = () => game.start();
 }
 
 function showHelp(): void {
   if (helpOpen) return;
   helpOpen = true; resumeAfterHelp = game.run.phase === 'flying'; if (resumeAfterHelp) game.pause();
-  showOverlay(`<section class="help-panel"><button id="close-help" class="icon-button close-button" aria-label="Закрыть управление">${icon('x')}</button><h1>Ваш первый полёт.</h1><p>Разбивайте астероиды с золотыми жилами. Собранная руда оплачивает усиление лазера и тройной выстрел. Кнопка «Оружие» или U открывает улучшения и ставит полёт на паузу.</p><dl class="control-list"><div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>или стрелки</span></dt><dd>Маневрировать</dd></div><div><dt>${icon('mouse')}<span>Мышь</span></dt><dd>Наводить прицел</dd></div><div><dt><kbd>ЛКМ</kbd></dt><dd>Ручной огонь · удерживать</dd></div><div><dt><kbd>A / D</kbd><span>+</span><kbd>ПРОБЕЛ</kbd></dt><dd>Бочка в сторону манёвра</dd></div><div><dt><kbd>SHIFT</kbd></dt><dd>Форсаж 6 секунд · краткая защита в начале</dd></div><div><dt><kbd>U</kbd></dt><dd>Улучшить оружие за руду</dd></div><div><dt><kbd>Q</kbd></dt><dd>Автоогонь · включён при старте</dd></div><div><dt><kbd>ESC</kbd><span>/</span><kbd>M</kbd></dt><dd>Пауза / звук</dd></div></dl><p class="help-footnote">Магнит собирает руду поблизости автоматически. Щит восстанавливается через 5 секунд без столкновений. Для бочки отклоните джойстик в сторону и нажмите кнопку бочки. Руда: 3–10 из золотых астероидов, 1–2 из обычных.</p><button id="help-done" class="primary-button">Всё понятно ${icon('arrow-right')}</button></section>`, 'Управление');
+  showOverlay(`<section class="help-panel">
+    <button id="close-help" class="icon-button close-button" aria-label="Закрыть управление">${icon('x')}</button>
+    <h1>Ваш первый полёт.</h1>
+    <p>Шесть секторов, три вида оружия. Разбивайте золотые астероиды и тратьте руду на улучшения. Красные камни взрываются от любого попадания: рядом с кораблём лучше уклониться. Синие бронекамни прочнее обычных — прорезайте их лучом.</p>
+    <dl class="control-list">
+      <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>или стрелки</span></dt><dd>Маневрировать</dd></div>
+      <div><dt>${icon('mouse')}<span>Мышь</span></dt><dd>Наводить прицел</dd></div>
+      <div><dt><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></dt><dd>Импульсы / плазма / резак</dd></div>
+      <div><dt><kbd>ЛКМ</kbd></dt><dd>Огонь выбранным оружием</dd></div>
+      <div><dt><kbd>A / D</kbd><span>+</span><kbd>ПРОБЕЛ</kbd></dt><dd>Бочка в сторону манёвра</dd></div>
+      <div><dt><kbd>SHIFT</kbd></dt><dd>Форсаж 6 секунд · защита в начале</dd></div>
+      <div><dt><kbd>U</kbd></dt><dd>Улучшить оружие за руду · пауза</dd></div>
+      <div><dt><kbd>Q</kbd></dt><dd>Автоогонь · включён при старте</dd></div>
+      <div><dt><kbd>ESC</kbd><span>/</span><kbd>M</kbd></dt><dd>Пауза / звук</dd></div>
+    </dl>
+    <p class="help-footnote">Резак проходит сквозь любые астероиды в прицеле: 1,8 секунды работы, 12 секунд перезарядки. С автоогнём луч включается, когда в прицеле есть цель. Плазма взрывается в радиусе 7 м и может задеть красный камень. На телефоне переключайте оружие кнопками над джойстиком. Щит восстанавливается через 5 секунд без урона; магнит собирает руду автоматически.</p>
+    <button id="help-done" class="primary-button">Всё понятно ${icon('arrow-right')}</button>
+  </section>`, 'Управление');
   const close = () => { helpOpen = false; if (resumeAfterHelp) game.resume(); else if (game.run.phase === 'upgrade') renderShop(); else if(game.run.phase==='armory') renderArmory(); else phase(game); };
   $('close-help').onclick = close; $('help-done').onclick = close;
 }
@@ -119,6 +141,10 @@ function bindUI(): void {
   $('launch-button').onclick = () => game.start(); $('intro-help').onclick = showHelp; $('help-button').onclick = showHelp;
   $('sound-button').onclick = () => sound(game.audio.toggle()); $('fullscreen-button').onclick = fullscreen; $('pause-button').onclick = () => game.togglePause();
   $('armory-button').onclick = () => game.openArmory();
+  document.querySelectorAll<HTMLButtonElement>('[data-weapon-id]').forEach(button => button.onclick = () => {
+    game.selectWeapon(button.dataset.weaponId as WeaponId);
+    if (game.run.phase === 'flying') game.renderer.domElement.focus({preventScroll:true});
+  });
   $('weapon-button').onclick = () => game.toggleAutoFire(); $('boost-button').onclick = () => game.boost(); $('touch-boost').onclick = () => game.boost();
   $('touch-roll').onclick = () => { if (!game.barrelRoll() && Math.abs(game.touchMove.x) < .15) toast('Отклоните джойстик влево или вправо для бочки.'); };
   $('best-start').textContent = best > 0 ? `Рекорд экспедиции · ${best} руды` : '';

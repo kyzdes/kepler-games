@@ -10,6 +10,11 @@ import type { SpaceEnvironment } from './environment';
 import { createShip, createRock, rockGeometry } from './models';
 import type { Rock } from './asteroids';
 import { Projectiles } from './projectiles';
+import { CuttingBeam } from './cutting-beam';
+import { WeaponBattery, WEAPONS, cutterRecharge, PLASMA_RADIUS, CUTTER_RANGE } from './weapons';
+import type { WeaponId } from './weapons';
+import { asteroidKind, blastDamage, blastRadius, sectorHazards } from './hazards';
+import { AsteroidVisuals } from './asteroid-visuals';
 import { Salvage } from './salvage';
 import { FlightEffects } from './flight-effects';
 import { GameAudio } from './audio';
@@ -44,6 +49,9 @@ export class Game {
   readonly keys = new Set<string>();
   readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   private readonly projectiles = new Projectiles(this.scene);
+  readonly weapons = new WeaponBattery();
+  private readonly beam = new CuttingBeam(this.scene);
+  private asteroidVisuals: AsteroidVisuals | null = null;
   private readonly salvage = new Salvage(this.scene, () => this.rng());
   private readonly effects: FlightEffects;
   private cosmos: SpaceEnvironment | null = null;
@@ -53,7 +61,6 @@ export class Game {
   private flightClock = 0;
   private frameClock = 0;
   private uiClock = 0;
-  private shotClock = 0;
   private lastDamage = -20;
   private invulnerable = 0;
   private readonly shipCollider = new ShipCollider();
@@ -88,6 +95,7 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.touchDevice ? 1.25 : 1.5));
     this.renderer.toneMapping = T.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.02;
+    this.renderer.localClippingEnabled = true;
     this.renderer.domElement.setAttribute('aria-label', 'Трёхмерный полёт в поясе астероидов');
     this.renderer.domElement.tabIndex = 0;
     host.appendChild(this.renderer.domElement);
@@ -123,7 +131,7 @@ export class Game {
       const texture = await loader.loadAsync(url);
       texture.name=url; texture.colorSpace=T.SRGBColorSpace;
       texture.anisotropy=Math.min(4,this.renderer.capabilities.getMaxAnisotropy());
-      onProgress({ percent:12 + ++texturesLoaded / urls.length * 24, stage:0, label:'Загружаем миры трёх секторов' });
+      onProgress({ percent:12 + ++texturesLoaded / urls.length * 24, stage:0, label:`Загружаем миры ${TOTAL_SECTORS} секторов` });
       return texture;
     };
     const loadedTextures = await Promise.all(urls.map(loadTexture));
@@ -134,6 +142,7 @@ export class Game {
     this.cosmos = createEnvironment(this.scene, this.renderer, textures, this.reducedMotion);
     const rockMap = moon.clone(); rockMap.wrapS = rockMap.wrapT = T.RepeatWrapping; rockMap.repeat.set(3, 2); rockMap.needsUpdate = true;
     const rockMaterial = new T.MeshStandardMaterial({ color: 0x58636d, map: rockMap, bumpMap: rockMap, bumpScale: .64, vertexColors: true, roughness: .97, metalness: .14 });
+    this.asteroidVisuals = new AsteroidVisuals(rockMaterial);
     const geometries: T.BufferGeometry[] = [];
     for (let i = 0; i < 9; i++) {
       geometries.push(rockGeometry(614 + i * 17));
@@ -146,7 +155,8 @@ export class Game {
       const root = createRock(geometries[i % geometries.length], rockMaterial, radius, isOre, i * 57 + 9);
       this.scene.add(root);
       const hp = 12 + radius * 8;
-      const rock: Rock = { root, radius, hp, maxHp: hp, ore: isOre, spin: new T.Vector3(this.rng() - .5, this.rng() - .5, this.rng() - .5).multiplyScalar(.13), wait: 0 };
+      const rock: Rock = { root, radius, hp, maxHp: hp, ore: isOre, kind: 'normal', spin: new T.Vector3(this.rng() - .5, this.rng() - .5, this.rng() - .5).multiplyScalar(.13), wait: 0 };
+      this.asteroidVisuals.register(rock, i * 57 + 9);
       this.rocks.push(rock); this.placeRock(rock, true, i);
       if (i % 22 === 21) {
         onProgress({ percent:58 + (i + 1) / 66 * 14, stage:1, label:'Создаём пояс астероидов' });
@@ -193,7 +203,9 @@ export class Game {
     if (initial && i === 3) rock.root.position.set(-16, 1, -12);
     if (initial && i === 4) rock.root.position.set(17, -5, -16);
     rock.root.rotation.set(this.rng() * 6, this.rng() * 6, this.rng() * 6);
-    rock.maxHp = (12 + rock.radius * 8) * (1 + (this.run.sector - 1) * .28);
+    rock.kind = asteroidKind(this.run.sector, this.rng());
+    rock.maxHp = (12 + rock.radius * 8) * (1 + (this.run.sector - 1) * .28) * (rock.kind === 'armored' ? 2.4 : 1);
+    this.asteroidVisuals?.apply(rock);
     rock.wait = 0; rock.hp = rock.maxHp; rock.root.visible = true;
   }
 
@@ -207,7 +219,8 @@ export class Game {
     this.cameraRig.reset(this.camera);
     this.velocity.set(0, 0); this.touchMove.set(0, 0); this.pointer.set(0, 0); this.keys.clear(); this.fireInput.clear();
     this.boostDrive.reset(); this.boostBlurPass.enabled=false;
-    this.flightClock = this.shotClock = this.invulnerable = 0; this.lastDamage = -20; this.flash = 0;
+    this.flightClock = this.invulnerable = 0; this.lastDamage = -20; this.flash = 0;
+    this.weapons.reset(); this.beam.hide(); this.audio.setCutting(false);
     this.projectiles.reset(); this.salvage.reset(); this.effects.reset();
     this.rocks.forEach((rock, i) => this.placeRock(rock, true, i));
     this.audio.start(); this.audio.setFlying(true);
@@ -234,6 +247,12 @@ export class Game {
     this.hooks.phase(this);
   }
   toggleAutoFire(): void { this.autoFire = !this.autoFire; this.hooks.update(this); }
+  selectWeapon(id: WeaponId): void {
+    if (!['flying', 'paused'].includes(this.run.phase) || !this.weapons.select(id)) return;
+    this.beam.hide(); this.audio.setCutting(false);
+    this.hooks.toast(`${WEAPONS[id].name} · ${WEAPONS[id].description}`);
+    this.hooks.update(this);
+  }
   boost(): void {
     if (this.run.phase !== 'flying' || !this.boostDrive.start()) return;
     this.invulnerable = Math.max(this.invulnerable, BOOST_PROTECTION);
@@ -252,8 +271,8 @@ export class Game {
     this.cosmos?.setSector(this.run.sector);
     this.run.shield = this.run.maxShield;
     this.rocks.forEach(r => { if (r.root.position.z > -45) this.placeRock(r); });
-    this.projectiles.reset();
-    this.keys.clear(); this.fireInput.clear(); this.audio.setFlying(true); this.hooks.phase(this); this.hooks.toast(`Сектор ${this.run.sector}. Плотность астероидов растёт.`);
+    this.projectiles.reset(); this.weapons.stopCutting(); this.beam.hide(); this.audio.setCutting(false);
+    this.keys.clear(); this.fireInput.clear(); this.audio.setFlying(true); this.hooks.phase(this); this.hooks.toast(`Сектор ${this.run.sector} · ${sectorHazards(this.run.sector).hint}`);
   }
 
   private bindControls(): void {
@@ -267,6 +286,9 @@ export class Game {
       if (e.code === 'Escape' || e.code === 'KeyP') this.togglePause();
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.boost();
       if (e.code === 'KeyQ') this.toggleAutoFire();
+      if (e.code === 'Digit1' || e.code === 'Numpad1') this.selectWeapon('pulse');
+      if (e.code === 'Digit2' || e.code === 'Numpad2') this.selectWeapon('plasma');
+      if (e.code === 'Digit3' || e.code === 'Numpad3') this.selectWeapon('cutter');
       if (e.code === 'KeyU') { this.run.phase==='armory' ? this.closeArmory() : this.openArmory(); }
       if (e.code === 'KeyH') this.hooks.help();
       if (e.code === 'KeyM') this.hooks.sound(this.audio.toggle());
@@ -305,6 +327,7 @@ export class Game {
     }
     this.cameraRig.update(this.camera, this.ship.root.position.x, this.flightY, dt);
     this.audio.setBoosting(this.run.phase==='flying' && this.boostTime>0);
+    this.audio.setCutting(this.run.phase==='flying' && this.weapons.cutting);
     const blur=this.run.phase==='flying' && !this.reducedMotion ? boostEnvelope(this.boostTime) : 0;
     this.boostBlurPass.uniforms.strength.value=blur; this.boostBlurPass.enabled=blur>.001;
     for (const flame of this.ship.flames) flame.scale.y = (this.boostTime > 0 ? 1.8 : 1) * (.96 + Math.sin(this.frameClock * 30) * .065);
@@ -320,6 +343,8 @@ export class Game {
     this.ship.root.updateMatrixWorld();
     this.shipFrameStart.copy(this.ship.root.matrixWorld);
     this.invulnerable = Math.max(0, this.invulnerable - dt); this.boostDrive.update(dt,this.run.boostCooldown);
+    this.weapons.recharge = cutterRecharge(this.run.levels.laser);
+    this.weapons.update(dt);
     const axisX = horizontalInput(this.keys, this.touchMove.x);
     const axisY = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) - (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0) + this.touchMove.y;
     const move = new T.Vector2(axisX, axisY); if (move.lengthSq() > 1) move.normalize();
@@ -346,22 +371,29 @@ export class Game {
       rock.root.rotation.x += rock.spin.x * dt; rock.root.rotation.y += rock.spin.y * dt;
       if (rock.root.position.z > 26) { this.placeRock(rock); continue; }
       if (this.invulnerable <= 0 && this.shipCollider.intersectsRock(this.startPoint, rock.root.position, rock.radius * .93)) {
-        const shieldBefore = this.run.shield, hullBefore = this.run.hull;
-        damageShip(this.run, 22 + rock.radius * 3); this.lastDamage = this.flightClock; this.invulnerable = 1.5; this.flash = 1;
-        this.effects.burst(rock.root.position, new T.Color(1, .36, .08), 28, 8); this.audio.hit(); this.hideRock(rock);
-        if (this.run.phase === 'ended') { this.finish(false); return; }
-        const hullLost = Math.ceil(hullBefore - this.run.hull), shieldLost = Math.ceil(shieldBefore - this.run.shield);
-        this.hooks.toast(hullLost > 0
-          ? `Корпус −${hullLost} · щит исчерпан`
-          : `Щит −${shieldLost} · ${this.run.shield > 0 ? 'столкновение' : 'защита исчерпана'}`);
+        this.hurtShip((rock.kind === 'volatile' ? 42 : rock.kind === 'armored' ? 34 : 22) + rock.radius * 3,
+          rock.kind === 'volatile' ? 'Взрывной астероид' : 'Столкновение');
+        if (rock.kind === 'volatile') this.effects.shockwave(rock.root.position, blastRadius(rock.radius), 0xff4f27);
+        this.effects.burst(rock.root.position, new T.Color(1, .36, .08), 28, 8); this.hideRock(rock);
+        if (this.run.hull <= 0) { this.finish(false); return; }
       }
     }
-    this.shotClock -= dt;
-    if ((this.shooting || this.autoFire) && this.shotClock <= 0) { this.fire(); this.shotClock = this.run.fireInterval; }
-    this.projectiles.update(dt, this.rocks, this.run.damage, (rock, position) => {
-      this.effects.burst(position, new T.Color(1.8, .65, .15), 5, 4);
-      if (rock.hp <= 0) this.breakRock(rock);
-    });
+    this.updateTarget();
+    const attack = this.weapons.fire(this.run.fireInterval, this.shooting, this.autoFire,
+      !!this.target && this.target.root.position.distanceTo(this.ship.root.position) <= CUTTER_RANGE + this.target.radius);
+    if (attack) this.fire(attack);
+    this.projectiles.update(dt, this.rocks, this.run.damage, (rock, position, kind) => {
+      this.effects.burst(position, kind === 'plasma' ? new T.Color(.5, .7, 2.5) : new T.Color(1.8, .65, .15), 5, 4);
+      if (rock.kind === 'volatile' || rock.hp <= 0) this.breakRock(rock);
+    }, position => {
+      this.effects.shockwave(position, PLASMA_RADIUS, 0x977dff);
+      this.effects.burst(position, new T.Color(.6, .4, 2.5), 24, 6);
+    }, () => this.run.hull > 0);
+    if (this.run.hull <= 0) { this.finish(false); return; }
+    if (this.weapons.cutting) this.beam.update(this.ship.muzzles, this.nearestTarget(), this.rocks,
+      (rock, direction) => this.breakRock(rock, direction), () => this.run.hull > 0);
+    else this.beam.hide();
+    if (this.run.hull <= 0) { this.finish(false); return; }
     this.salvage.update(dt, worldSpeed, this.ship.root.position, this.run.magnet, (value, position) => {
       collectOre(this.run, value);
       if (this.flightClock - this.lastPickupSound > .07) { this.audio.pickup(); this.lastPickupSound = this.flightClock; }
@@ -372,7 +404,7 @@ export class Game {
       // A sector transfer finishes the tractor collection before the equipment bay opens.
       this.salvage.collectAll(value => collectOre(this.run, value));
       if (this.run.sector === TOTAL_SECTORS) this.finish(true);
-      else { this.run.phase = 'upgrade'; this.keys.clear(); this.fireInput.clear(); this.audio.setFlying(false); this.audio.upgrade(); this.hooks.phase(this); }
+      else { this.run.phase = 'upgrade'; this.keys.clear(); this.fireInput.clear(); this.weapons.stopCutting(); this.beam.hide(); this.audio.setCutting(false); this.audio.setFlying(false); this.audio.upgrade(); this.hooks.phase(this); }
     }
   }
 
@@ -389,12 +421,15 @@ export class Game {
     return this.aimPoint;
   }
 
-  private fire(): void {
-    this.projectiles.fire(this.ship.muzzles, this.nearestTarget(), this.run.multishot);
-    this.audio.shot();
+  private fire(weapon: WeaponId): void {
+    if (weapon === 'cutter') { this.audio.cutter(); return; }
+    this.projectiles.fire(this.ship.muzzles, this.nearestTarget(), this.run.multishot,
+      { kind: weapon, damage: this.run.damage * (weapon === 'plasma' ? 2.5 : 1) });
+    if (weapon === 'plasma') this.audio.plasma(); else this.audio.shot();
   }
 
-  private breakRock(rock: Rock): void {
+  private breakRock(rock: Rock, cutDirection?: T.Vector3): void {
+    if (rock.wait > 0 || this.run.hull <= 0) return;
     this.run.kills++;
     this.effects.burst(rock.root.position, new T.Color(1.3, .63, .19), 34, 9);
     this.effects.burst(rock.root.position, new T.Color(.24, .3, .38), 20, 5);
@@ -402,9 +437,24 @@ export class Game {
     const distance=rock.root.position.distanceTo(this.ship.root.position);
     this.audio.rock(rock.radius,offset/Math.max(16,distance*.35),distance);
     const source = rock.root.children[0] as T.Mesh;
-    this.effects.shatter(source, rock.root.position, rock.radius);
-    this.salvage.drop(rock.root.position, rock.radius, rock.ore);
+    source.updateWorldMatrix(true, false);
+    if (cutDirection && rock.kind !== 'volatile') {
+      this.effects.slice(source, rock.root.position, cutDirection);
+      this.effects.burst(rock.root.position, new T.Color(.5, 1.4, 1.8), 12, 4);
+    } else this.effects.shatter(source, rock.root.position, rock.radius);
+    this.salvage.drop(rock.root.position, rock.radius, rock.kind === 'normal' && rock.ore);
     this.hideRock(rock);
+    if (rock.kind === 'volatile') {
+      this.effects.shockwave(rock.root.position, blastRadius(rock.radius), 0xff4f27);
+      const damage = blastDamage(rock.radius, distance);
+      if (damage > 0 && this.invulnerable <= 0) this.hurtShip(damage, 'Взрыв рядом с кораблём');
+    }
+  }
+  private hurtShip(amount: number, reason: string): void {
+    const shieldBefore = this.run.shield, hullBefore = this.run.hull;
+    damageShip(this.run, amount); this.lastDamage = this.flightClock; this.invulnerable = 1.5; this.flash = 1;
+    this.audio.hit();
+    if (this.run.hull > 0) this.hooks.toast(`${reason} · ${hullBefore > this.run.hull ? `корпус −${Math.ceil(hullBefore - this.run.hull)}` : `щит −${Math.ceil(shieldBefore - this.run.shield)}`}`);
   }
   private hideRock(rock: Rock): void { rock.wait = 1.2 + this.rng() * 2; rock.root.visible = false; }
 
@@ -420,14 +470,18 @@ export class Game {
       }
     }
   }
-  targetScreen(): { x: number; y: number; health: number; ore: boolean } | null {
+  targetScreen(): { x: number; y: number; health: number; ore: boolean; kind: Rock['kind'] } | null {
     if (!this.target) return null;
     this.tmp2.copy(this.target.root.position); this.tmp2.y += this.target.radius + 1.6; this.tmp2.project(this.camera);
-    return { x: (this.tmp2.x + 1) / 2 * this.host.clientWidth, y: (1 - this.tmp2.y) / 2 * this.host.clientHeight, health: this.target.hp / this.target.maxHp, ore: this.target.ore };
+    return { x: (this.tmp2.x + 1) / 2 * this.host.clientWidth, y: (1 - this.tmp2.y) / 2 * this.host.clientHeight, health: this.target.hp / this.target.maxHp, ore: this.target.ore, kind: this.target.kind };
+  }
+  get dangerNearby(): boolean {
+    return this.run.phase === 'flying' && this.rocks.some(rock => rock.wait <= 0 && rock.kind === 'volatile'
+      && rock.root.position.z < 5 && rock.root.position.distanceTo(this.ship.root.position) < blastRadius(rock.radius) + 7);
   }
   get damageFlash(): number { return this.flash; }
   get oreCount(): number { return this.salvage.count; }
   private finish(won: boolean): void {
-    this.run.phase = 'ended'; this.run.won = won; this.keys.clear(); this.touchMove.set(0, 0); this.fireInput.clear(); this.audio.setFlying(false); this.hooks.phase(this);
+    this.run.phase = 'ended'; this.run.won = won; this.keys.clear(); this.touchMove.set(0, 0); this.fireInput.clear(); this.weapons.stopCutting(); this.beam.hide(); this.audio.setCutting(false); this.audio.setFlying(false); this.hooks.phase(this);
   }
 }

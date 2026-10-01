@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { asteroidOre, splitOre, flightSpeed, mulberry32, SECTOR_SECONDS, UPGRADES } from '../src/state.ts';
+import { asteroidOre, splitOre, flightSpeed, mulberry32, SECTOR_SECONDS, TOTAL_SECTORS, UPGRADES } from '../src/state.ts';
 import { BarrelRoll, ROLL_DISTANCE, ROLL_DURATION, ROLL_COOLDOWN } from '../src/maneuvers.ts';
 import { rollDirection } from '../src/input.ts';
 import { PlanetStorm, lightningEnvelope } from '../src/storm.ts';
@@ -31,11 +31,11 @@ test('twenty mixed kills typically fund one or two basic upgrades instead of the
 
 test('forward speed increases within sectors and never drops at a sector boundary', () => {
   let previous = 0;
-  for (let sector = 1; sector <= 3; sector++) for (let seconds = 0; seconds <= SECTOR_SECONDS; seconds++) {
+  for (let sector = 1; sector <= TOTAL_SECTORS; sector++) for (let seconds = 0; seconds <= SECTOR_SECONDS; seconds++) {
     const speed = flightSpeed(sector, seconds);
     assert.ok(speed >= previous); previous = speed;
   }
-  assert.equal(flightSpeed(1, 0), 18); assert.equal(flightSpeed(3, SECTOR_SECONDS), 34);
+  assert.equal(flightSpeed(1, 0), 18); assert.equal(flightSpeed(TOTAL_SECTORS, SECTOR_SECONDS), 52);
 });
 
 test('a barrel roll completes exactly once, with mirrored displacement independent of frame rate', () => {

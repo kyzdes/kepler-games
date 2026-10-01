@@ -2,7 +2,8 @@ import * as T from 'three';
 import { Game } from '../src/game';
 import type { Projectiles } from '../src/projectiles';
 import type { Salvage } from '../src/salvage';
-import { asteroidOre, buyUpgrade, flightSpeed, mulberry32, SECTOR_SECONDS } from '../src/state';
+import { asteroidOre, buyUpgrade, flightSpeed, mulberry32, SECTOR_SECONDS, TOTAL_SECTORS } from '../src/state';
+import type { WeaponId } from '../src/weapons';
 import { PlanetStorm } from '../src/storm';
 import { StableFlightCamera } from '../src/camera';
 import { sectorVisual } from '../src/sectors';
@@ -21,7 +22,7 @@ const sim = game as unknown as {
   tickFlight(dt: number): void; breakRock(rock: Rock): void;
   projectiles: Projectiles; salvage: Salvage;
   invulnerable: number; rng: () => number;
-  frame(): void; lastFrame: number; fire():void;
+  frame(): void; lastFrame: number; fire(weapon:WeaponId):void;
 };
 const step = (frames = 1) => {
   for (let i = 0; i < frames && game.run.phase === 'flying'; i++) sim.tickFlight(1 / 60);
@@ -74,8 +75,8 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
   record('После окна защиты урон снова проходит', game.run.shield < 75);
   game.start(); record('Новый забег сбрасывает бочку и перезарядку', !game.roll.active && game.roll.cooldown === 0);
   const speeds:number[]=[];
-  for(let sector=1;sector<=3;sector++) { game.run.sector=sector; game.run.sectorTime=0; speeds.push(game.forwardSpeed); game.run.sectorTime=SECTOR_SECONDS; speeds.push(game.forwardSpeed); }
-  record('Настоящая игра ускоряется во всех секторах', speeds.join(',') === '18,22,24,28,30,34', speeds);
+  for(let sector=1;sector<=TOTAL_SECTORS;sector++) { game.run.sector=sector; game.run.sectorTime=0; speeds.push(game.forwardSpeed); game.run.sectorTime=SECTOR_SECONDS; speeds.push(game.forwardSpeed); }
+  record('Настоящая игра ускоряется во всех шести секторах', speeds.join(',') === '18,22,24,28,30,34,36,40,42,46,48,52', speeds);
   const travel=(boosting:boolean) => {
     fresh(); const rock=game.rocks[0]; rock.wait=0; rock.root.visible=true; rock.root.position.set(60,0,-150);
     if(boosting) game.boost(); step(60);
@@ -88,13 +89,13 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
   game.audio.rock=(radius=1,pan=0,distance=0)=>soundCalls.push({radius,pan,distance});
   fresh();
   for(const [radius,x] of [[1.5,-8],[4.5,8]]) {
-    const rock=game.rocks[0]; rock.radius=radius; rock.root.position.set(x,0,-40); sim.breakRock(rock);
+    const rock=game.rocks[0]; rock.radius=radius; rock.wait=0; rock.root.position.set(x,0,-40); sim.breakRock(rock);
   }
   game.audio.rock=originalRockSound;
   record('Разрушение передаёт размер, сторону и дистанцию в звук взрыва', soundCalls.length===2 && soundCalls[0].radius===1.5 && soundCalls[1].radius===4.5 && soundCalls[0].pan<0 && soundCalls[1].pan>0 && soundCalls.every(s=>s.distance>40),soundCalls);
   fresh(); let expected = 0;
   for(let i=0;i<100;i++) {
-    const rock=game.rocks[i % game.rocks.length]; rock.radius=1+(i%6); rock.ore=i%4!==3;
+    const rock=game.rocks[i % game.rocks.length]; rock.radius=1+(i%6); rock.ore=i%4!==3; rock.wait=0;
     rock.root.position.set(0,0,-30); expected+=asteroidOre(rock.radius,rock.ore); sim.breakRock(rock);
   }
   record('Общая награда сохраняется при заполнении пула кристаллов', sim.salvage.drops.length===150 && sim.salvage.drops.reduce((sum,ore)=>sum+ore.value,0)===expected, {crystals:sim.salvage.drops.length, ore:expected});
@@ -106,14 +107,14 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
   });
   fresh();
   const journey=[];
-  for(let sector=1;sector<=3;sector++) {
+  for(let sector=1;sector<=TOTAL_SECTORS;sector++) {
     clearRocks(); const visual=sectorVisual(sector);
     const correctMaps=maps().join(',')===[visual.planet,visual.sky].join(',');
     step(SECTOR_SECONDS*60+1);
     journey.push({sector,seconds:game.run.sectorTime,phase:game.run.phase,correctMaps});
-    if(sector<3) game.nextSector();
+    if(sector<TOTAL_SECTORS) game.nextSector();
   }
-  record('Три сектора длятся по 75 секунд и заканчиваются победой', journey.every((j,i)=>Math.abs(j.seconds-75)<.02 && j.phase===(i<2?'upgrade':'ended')) && Math.abs(game.run.elapsed-225)<.06 && game.run.won, journey);
+  record('Шесть секторов длятся по 75 секунд и заканчиваются победой', journey.every((j,i)=>Math.abs(j.seconds-75)<.02 && j.phase===(i<TOTAL_SECTORS-1?'upgrade':'ended')) && Math.abs(game.run.elapsed-SECTOR_SECONDS*TOTAL_SECTORS)<.12 && game.run.won, journey);
   record('Переходы реально меняют текстуры планеты и галактики', journey.every(j=>j.correctMaps));
   game.start();
   record('Новый забег возвращает текстуры первого сектора', maps().join(',')===[sectorVisual(1).planet,sectorVisual(1).sky].join(','));
@@ -145,7 +146,7 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
   step(270); game.boost(); record('После перезарядки форсаж снова доступен', game.boostTime===6);
   fresh(); let salvage=0;
   for(let i=0;i<30;i++) {
-    const rock=game.rocks[i]; rock.radius=3; rock.ore=true; rock.root.position.set(0,0,-25);
+    const rock=game.rocks[i]; rock.radius=3; rock.ore=true; rock.wait=0; rock.root.position.set(0,0,-25);
     salvage+=asteroidOre(rock.radius,true); sim.breakRock(rock);
   }
   clearRocks(); sim.salvage.drops.forEach(ore=>ore.mesh.position.copy(game.ship.root.position)); step();
@@ -156,12 +157,49 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
   record('U открывает оружейную и останавливает время полёта и форсажа', game.run.phase==='armory' && game.run.elapsed===armoryElapsed && game.boostTime===armoryBoost);
   const baseDamage=game.run.damage;
   const laserBought=buyUpgrade(game.run,'laser'), tripleBought=buyUpgrade(game.run,'multishot');
-  record('Собранная руда оплачивает лазер и тройной импульс', laserBought && tripleBought && game.run.ore===salvage-155 && game.run.mined===salvage && game.run.damage===baseDamage*1.35 && game.run.levels.laser===2);
-  key('KeyU'); key('KeyU','keyup'); sim.fire();
+  record('Собранная руда оплачивает энергоконтур и тройной залп', laserBought && tripleBought && game.run.ore===salvage-155 && game.run.mined===salvage && game.run.damage===baseDamage*1.35 && game.run.levels.laser===2);
+  key('KeyU'); key('KeyU','keyup'); sim.fire('pulse');
   record('Улучшенное оружие выпускает по три луча из каждого ствола', game.run.phase==='flying' && game.run.multishot && sim.projectiles.count===game.ship.muzzles.length*3);
   game.pause(); game.openArmory(); game.closeArmory();
   record('Оружейная, открытая из паузы, возвращает на паузу', game.run.phase==='paused');
   game.start(); record('Новая экспедиция сбрасывает форсаж и купленное оружие', game.boostTime===0 && game.boostCooldown===0 && game.run.levels.laser===1 && !game.run.multishot);
+  fresh(); key('Digit2'); key('Digit2','keyup'); game.autoFire=true; step();
+  record('Клавиша 2 меняет оружие в полёте и автоогонь выпускает плазму', game.run.phase==='flying' && game.weapons.selected==='plasma' && sim.projectiles.count===1);
+  fresh(); key('Digit3'); key('Digit3','keyup'); game.autoFire=true; step(20);
+  record('Автоогонь не тратит заряд резака на пустой прицел', game.weapons.selected==='cutter' && !game.weapons.cutting && game.weapons.cooldown===0);
+  for(const [i,z,kind] of [[0,-30,'normal'],[1,-60,'armored'],[2,-100,'volatile']] as const) {
+    const rock=game.rocks[i]; rock.wait=0; rock.radius=3; rock.kind=kind; rock.hp=999; rock.maxHp=999;
+    rock.root.visible=true; rock.root.position.set(0,.43,z); rock.root.scale.setScalar(3);
+  }
+  const beamTarget=game.rocks[0].root.position.clone().project(game.camera); game.pointer.set(beamTarget.x,beamTarget.y);
+  step();
+  record('Резак прорезает обычный, бронированный и взрывной камни за один проход', game.weapons.cutting && game.run.kills===3 && game.rocks.slice(0,3).every(r=>r.wait>0) && game.run.shield===75);
+  const beamTime=game.weapons.remaining; game.pause(); step(20);
+  record('Пауза сохраняет оставшееся время луча', game.weapons.remaining===beamTime);
+  game.resume(); game.openArmory(); step(20);
+  record('Оружейная тоже останавливает луч', game.weapons.remaining===beamTime);
+  game.closeArmory(); clearRocks(); step(108);
+  record('Луч выключается через 1,8 секунды и начинает заряд', !game.weapons.cutting && game.weapons.cooldown>11.9 && game.weapons.cooldown<=12);
+  step(720); game.fireInput.press(1); step(); game.fireInput.clear();
+  record('Через 12 секунд можно снова включить резак вручную', game.weapons.cutting);
+  key('Digit1'); key('Digit1','keyup');
+  record('Переключение во время луча прекращает его и сохраняет зарядку', game.weapons.selected==='pulse' && !game.weapons.cutting && game.weapons.cooldown===12);
+  const shootVolatile=(z:number) => {
+    fresh(); const rock=game.rocks[0]; rock.wait=0; rock.radius=1; rock.kind='volatile'; rock.hp=999; rock.maxHp=999;
+    rock.root.visible=true; rock.root.position.set(0,.43,z); rock.root.scale.setScalar(1);
+    const p=rock.root.position.clone().project(game.camera); game.pointer.set(p.x,p.y); game.autoFire=true;
+    step(25);
+    return {shield:game.run.shield,kills:game.run.kills,hidden:rock.wait>0};
+  };
+  const closeBlast=shootVolatile(-11), farBlast=shootVolatile(-45);
+  record('Любое попадание взрывает красный камень, близкий взрыв наносит урон', closeBlast.kills===1 && closeBlast.hidden && closeBlast.shield<75, closeBlast);
+  record('Взрыв на безопасной дистанции не повреждает корабль', farBlast.kills===1 && farBlast.hidden && farBlast.shield===75, farBlast);
+  fresh(); game.rocks[0].kind='volatile'; placeHit();
+  record('Столкновение со взрывным астероидом наносит повышенный урон', game.run.shield<40);
+  fresh(); const fatal=game.rocks[0]; fatal.wait=0; fatal.radius=1; fatal.kind='volatile'; fatal.root.position.set(0,0,-8);
+  game.run.shield=0; game.run.hull=1; sim.breakRock(fatal); step();
+  record('Смертельный близкий взрыв завершает забег', game.run.phase==='ended' && game.run.hull===0 && !game.run.won);
+  game.start(); record('Рестарт возвращает импульсы и полный заряд луча', game.weapons.selected==='pulse' && game.weapons.cooldown===0 && !game.weapons.cutting);
   // Seeded pilot aims at the nearest rock ahead, purchases no upgrades, remains
   // in the center. These are reproducible samples, not human play telemetry.
   const samples=[];

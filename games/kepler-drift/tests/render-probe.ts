@@ -1,4 +1,6 @@
 import { Game } from '../src/game';
+import { TOTAL_SECTORS } from '../src/state';
+import * as T from 'three';
 
 // Development-only regression fixture: sample the actual final framebuffer,
 // with the same scene, camera, materials and composer as the game.
@@ -13,6 +15,9 @@ const initialSamples = game.composer.renderTarget1.samples;
 const gl = game.renderer.getContext();
 const atmosphere = game as unknown as { cosmos: { update(dt: number): void; setSector(sector:number): void } };
 const blur=game as unknown as { boostBlurPass: {enabled:boolean; uniforms:{strength:{value:number}}} };
+const simulation=game as unknown as {tickFlight(dt:number):void; asteroidVisuals:{apply(rock:Game['rocks'][number]):void}};
+// This fixture checks graphics; audio has its own user-initiated fixture.
+game.audio.start=()=>{};
 
 type ProbeMode = 'current' | 'legacy-msaa' | 'no-bloom';
 async function measure(mode: ProbeMode): Promise<void> {
@@ -26,7 +31,7 @@ async function measure(mode: ProbeMode): Promise<void> {
   const means: number[] = [];
   const maxima: number[] = [];
   const errors: number[] = [];
-  for (let frame = 0; frame < 180; frame++) {
+  for (let frame = 0; frame < TOTAL_SECTORS * 60; frame++) {
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     if (frame % 60 === 0) atmosphere.cosmos.setSector(frame / 60 + 1);
     blur.boostBlurPass.enabled=frame%60>=20 && frame%60<40;
@@ -60,15 +65,44 @@ async function measure(mode: ProbeMode): Promise<void> {
   blur.boostBlurPass.enabled=true; game.composer.render();
   const centerDelta=averageDelta(centerBefore,readSquare(.5,.5)), edgeDelta=averageDelta(edgeBefore,readSquare(.05,.5));
   blur.boostBlurPass.enabled=false;
+  game.start(); game.autoFire=false; game.run.sector=3; atmosphere.cosmos.setSector(3);
+  for(const rock of game.rocks) { rock.wait=999; rock.root.visible=false; }
+  for(const [i,z,kind] of [[0,-35,'normal'],[1,-65,'armored'],[2,-100,'volatile']] as const) {
+    const rock=game.rocks[i]; rock.wait=0; rock.kind=kind; rock.radius=3; rock.hp=rock.maxHp=300;
+    rock.root.position.set(0,.43,z); rock.root.scale.setScalar(3); rock.root.visible=true;
+    simulation.asteroidVisuals.apply(rock);
+  }
+  const aim=game.rocks[0].root.position.clone().project(game.camera); game.pointer.set(aim.x,aim.y);
+  game.selectWeapon('cutter'); game.fireInput.press(7);
+  const weaponMeans:number[]=[], weaponErrors:number[]=[];
+  for(let frame=0;frame<180;frame++) {
+    await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+    if(frame===110) {
+      game.selectWeapon('plasma');
+      const target=game.rocks[0]; target.wait=0; target.kind='normal'; target.hp=300; target.root.visible=true;
+      target.root.position.set(0,.43,-35); simulation.asteroidVisuals.apply(target);
+    }
+    if(frame===150) game.selectWeapon('pulse');
+    simulation.tickFlight(1/60); game.composer.render();
+    const pixels=new Uint8Array(gl.drawingBufferWidth*4);
+    gl.readPixels(0,Math.floor(gl.drawingBufferHeight*.5),gl.drawingBufferWidth,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+    let total=0; for(let i=0;i<pixels.length;i+=4) total+=(pixels[i]+pixels[i+1]+pixels[i+2])/3;
+    weaponMeans.push(total/gl.drawingBufferWidth);
+    const error=gl.getError(); if(error) weaponErrors.push(error);
+  }
+  game.fireInput.clear(); game.pause();
   // A stable black image must fail too: bloom alone can survive while the
   // sky, planet and ship are discarded. Three scanlines cover that distinction.
-  const passed = drops === 0 && Math.min(...means) >= 15 && errors.length === 0 && centerDelta<.1 && edgeDelta>.1;
+  const passed = drops === 0 && Math.min(...means) >= 15 && errors.length === 0 && centerDelta<.1 && edgeDelta>.1
+    && Math.min(...weaponMeans)>=15 && weaponErrors.length===0 && game.run.kills>=3;
   result.textContent = JSON.stringify({
     passed, mode, frames: means.length, msaaSamples: game.composer.renderTarget1.samples,
     brightnessDrops: drops, minMean: Math.min(...means), maxMean: peak,
-    sectors: [0,1,2].map(i=>({sector:i+1,minMean:Math.min(...means.slice(i*60,i*60+60)),maxMean:Math.max(...means.slice(i*60,i*60+60))})),
+    sectors: Array.from({length:TOTAL_SECTORS},(_,i)=>({sector:i+1,minMean:Math.min(...means.slice(i*60,i*60+60)),maxMean:Math.max(...means.slice(i*60,i*60+60))})),
     minPeak: Math.min(...maxima), glErrors: errors, firstFrames: means.slice(0, 12),
     blurPixels:{centerDelta,edgeDelta},
+    weapons:{frames:weaponMeans.length,minMean:Number(Math.min(...weaponMeans).toFixed(2)),glErrors:weaponErrors,
+      kills:game.run.kills,beamRemaining:game.weapons.remaining},
   }, null, 2);
   buttons.forEach(button => button.disabled = false);
 }

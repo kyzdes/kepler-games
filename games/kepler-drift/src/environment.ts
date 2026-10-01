@@ -1,6 +1,6 @@
 import * as T from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { mulberry32 } from './state';
+import { mulberry32, TOTAL_SECTORS } from './state';
 import { PlanetStorm } from './storm';
 import { sectorVisual } from './sectors';
 import { QuietSkyShader } from './quiet-sky';
@@ -30,7 +30,7 @@ export function createEnvironment(scene: T.Scene, renderer: T.WebGLRenderer, tex
   const starField = new T.Points(sg,new T.PointsMaterial({size:1.65,sizeAttenuation:true,vertexColors:true,transparent:true,opacity:.6,fog:false}));
   cosmos.add(starField);
   const first = sectorVisual(1), ice = textures.get(first.planet)!;
-  for (let sector = 1; sector <= 3; sector++) {
+  for (let sector = 1; sector <= TOTAL_SECTORS; sector++) {
     const url=sectorVisual(sector).sky;
     if(!url) continue;
     const panorama = textures.get(url)!;
@@ -67,6 +67,8 @@ export function createEnvironment(scene: T.Scene, renderer: T.WebGLRenderer, tex
     const visual=sectorVisual(sector);
     planetMaterial.map=textures.get(visual.planet)!; planetMaterial.bumpMap=planetMaterial.map; planetMaterial.emissiveMap=planetMaterial.map;
     planetMaterial.color.setHex(visual.planetTint); planetMaterial.bumpScale=visual.bump; planetMaterial.emissiveIntensity=visual.emission;
+    planet.rotation.y=visual.planetRotation ?? 1.1;
+    nebula.color.setHex(visual.planetTint).multiplyScalar(.55);
     if(visual.sky) nebula.map=textures.get(visual.sky)!;
     sky.material=visual.sky ? nebula : quietSky; sky.rotation.set(...visual.skyRotation);
     starField.material.size=visual.sky ? 1.65 : 2.15; starField.material.opacity=visual.sky ? .6 : .88;

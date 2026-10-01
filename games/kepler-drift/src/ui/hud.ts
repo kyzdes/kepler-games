@@ -2,6 +2,7 @@ import type { Game } from '../game';
 import { BOOST_DURATION } from '../boost';
 import { SECTOR_SECONDS, WEAPON_UPGRADES, upgradeCost } from '../state';
 import { $, time, setText } from './dom';
+import { CUTTER_DURATION, cutterRecharge } from '../weapons';
 
 export function createFlightHud(toast: (message: string) => void) {
   let lastOre = 0;
@@ -45,7 +46,18 @@ export function createFlightHud(toast: (message: string) => void) {
     $('weapon-button').classList.toggle('active', g.autoFire);
     $('weapon-button').setAttribute('aria-pressed', String(g.autoFire));
     $('weapon-button').setAttribute('aria-label', g.autoFire ? 'Выключить автоогонь' : 'Включить автоогонь');
-    setText('fire-status', g.autoFire ? 'АВТООГОНЬ · Q' : 'РУЧНОЙ ОГОНЬ');
+    setText('fire-status', g.autoFire ? 'АВТО' : 'РУЧНОЙ');
+    document.querySelectorAll<HTMLButtonElement>('[data-weapon-id]').forEach(button => {
+      const selected = button.dataset.weaponId === g.weapons.selected;
+      button.classList.toggle('selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+    $('reticle').dataset.weapon = g.weapons.selected;
+    setText('cutter-status', g.weapons.cutting ? `ЛУЧ ${g.weapons.remaining.toFixed(1)} С` : g.weapons.cooldown > 0 ? `ЗАРЯД ${g.weapons.cooldown.toFixed(1)} С` : 'ГОТОВ · 1,8 С');
+    $('select-cutter').classList.toggle('firing', g.weapons.cutting);
+    $('select-cutter').classList.toggle('recharging', g.weapons.cooldown > 0);
+    $('cutter-fill').style.transform = `scaleX(${g.weapons.cutting ? g.weapons.remaining / CUTTER_DURATION : Math.max(0, 1 - g.weapons.cooldown / cutterRecharge(r.levels.laser))})`;
+    $('hazard-warning').hidden = !g.dangerNearby;
     const numerals = ['0', 'I', 'II', 'III', 'IV', 'V'];
     for (const id of ['laser', 'engine', 'magnet'] as const)
       setText(`${id}-level`, numerals[r.levels[id]] || String(r.levels[id]));
@@ -59,7 +71,8 @@ export function createFlightHud(toast: (message: string) => void) {
       $('target-info').style.left = `${target.x}px`;
       $('target-info').style.top = `${target.y}px`;
       $('target-health').style.transform = `scaleX(${Math.max(0, target.health)})`;
-      setText('target-label', target.ore ? 'РУДНЫЙ АСТЕРОИД' : 'СИЛИКАТНЫЙ АСТЕРОИД');
+      $('target-info').dataset.kind = target.kind;
+      setText('target-label', target.kind === 'volatile' ? 'ВЗРЫВНОЙ · ДЕРЖИТЕ ДИСТАНЦИЮ' : target.kind === 'armored' ? 'БРОНЕКАМЕНЬ · РЕЗАК' : target.ore ? 'РУДНЫЙ АСТЕРОИД' : 'СИЛИКАТНЫЙ АСТЕРОИД');
     }
     drawRadar(g);
   }
@@ -97,11 +110,14 @@ export function createFlightHud(toast: (message: string) => void) {
       const x = (rock.root.position.x - g.ship.root.position.x) * 3.5, y = rock.root.position.z * 1.02 + 50;
       if (Math.hypot(x, y) > 132)
         continue;
-      ctx.fillStyle = rock.ore ? '#eab66e' : '#738995';
+      ctx.fillStyle = rock.kind === 'volatile' ? '#ff765e' : rock.kind === 'armored' ? '#91bfff' : rock.ore ? '#eab66e' : '#738995';
       ctx.globalAlpha = .45 + (1 + rock.root.position.z / 120) * .5;
       ctx.beginPath();
       ctx.arc(x, y, rock.radius > 3 ? 4.5 : 3, 0, Math.PI * 2);
       ctx.fill();
+      if (rock.kind === 'volatile') {
+        ctx.strokeStyle = '#ff765e'; ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.stroke();
+      }
     }
     ctx.globalAlpha = 1;
     ctx.fillStyle = '#d2efff';

@@ -36,3 +36,30 @@
 @media(max-width:760px){.equipment{bottom:47px;gap:7px}.equipment-slot{width:96px;height:87px}.equipment-status{font-size:9px}.equipment-name{font-size:9px}.target-info>span{font-size:9px}}
 @media(max-width:520px){.equipment{bottom:43px}.equipment-slot{width:93px}}
 @media(max-height:480px) and (min-width:600px){.equipment{bottom:33px}.equipment-slot{height:75px;width:101px}}
+
+/* The armament bank extends the existing flight instruments. */
+.header-right{gap:16px}
+.route-stops{gap:8px}.route-stops b{width:18px}
+.sector-hint{margin-top:11px;font-size:10px;line-height:1.4;color:#c0d8e6;letter-spacing:.2px}
+.auto-fire-button{display:flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:7px 9px;background:rgba(6,16,25,.75);border:1px solid var(--line);border-radius:3px;font-size:10px;color:#c3d6e2;white-space:nowrap}
+.auto-fire-button svg{width:17px;height:17px}.auto-fire-button.active{color:var(--gold);border-color:#ab7949}.auto-fire-button:hover{background:#142d3e}
+.equipment-slot{width:98px;height:88px}.weapon-choice{--weapon-color:#edb580;background:rgba(5,17,27,.88)}
+.weapon-choice[data-weapon-id="plasma"]{--weapon-color:#b6acff}.weapon-choice[data-weapon-id="cutter"]{--weapon-color:#8ae6f7}
+.weapon-choice>svg{color:var(--weapon-color)!important}.weapon-choice.selected{border-color:var(--weapon-color);background:rgba(28,48,64,.94)}
+.weapon-choice .equipment-status{color:#c5d7e3;font-size:9px;letter-spacing:.1px;font-variant-numeric:tabular-nums}
+.weapon-choice.selected .equipment-name{color:var(--weapon-color)}.weapon-choice.firing{background:#17424f}.weapon-choice.recharging>svg{opacity:.65}
+.pulse-line{background:#edb580}.plasma-line{background:#b6acff}.cutter-line{background:#8ae6f7}
+.reticle[data-weapon="plasma"]{color:#c6baff}.reticle[data-weapon="cutter"]{color:#8ae6f7}
+.target-info[data-kind="volatile"]{width:245px;background:rgba(38,10,9,.9)}.target-info[data-kind="volatile"]>span{color:#ffd1bc}.target-info[data-kind="volatile"] i{background:#ff765e}
+.target-info[data-kind="armored"]>span{color:#badfff}.target-info[data-kind="armored"] i{background:#87bfff}
+.radar-legend>.danger-dot{background:#ff765e}.radar-legend{font-size:7px}
+.hazard-warning{position:absolute;right:44px;top:122px;display:flex;align-items:center;gap:11px;padding:11px 13px;background:rgba(35,13,12,.91);border:1px solid rgba(255,145,105,.5);color:#ffd0bc;font-size:10px;line-height:1.5;letter-spacing:.4px}
+.hazard-warning small{font-size:10px;letter-spacing:0;color:#f7c3b1}.hazard-warning>svg{width:24px;height:24px}
+.game-app[data-phase="ready"] .sector-hint{display:none}
+@media(max-width:1350px){.auto-fire-button span{display:none}.auto-fire-button{width:36px}.equipment{gap:9px}}
+@media(max-width:1150px){.equipment-slot{width:84px;height:85px}.equipment-name{font-size:9px}.equipment-name b{font-size:7px}.header-right{gap:12px}.route-stops{gap:7px}.route-stops b{width:16px}}
+@media(max-width:900px){.equipment>.passive{display:none}.route{display:none}.hazard-warning{right:30px;top:100px;max-width:230px}}
+@media(max-width:760px){.equipment-slot{width:77px;height:82px}.header-right{gap:7px}.auto-fire-button{width:32px;padding:6px}.sector-hint{font-size:9px;width:200px}.hazard-warning{right:22px;top:91px;font-size:9px}.hazard-warning small{font-size:9px}}
+@media(max-width:520px){.equipment{width:calc(100% - 44px);bottom:47px;gap:8px}.equipment>.equipment-slot:not(.weapon-choice){display:none}.weapon-choice{flex:1;min-width:0}.equipment-name{font-size:10px}.weapon-choice .equipment-status{font-size:9px}.hazard-warning{left:22px;right:22px;top:192px;max-width:none;justify-content:center}.toast{top:32%}.target-info[data-kind="volatile"]{width:230px}}
+@media(pointer:coarse){.game-app[data-phase="flying"] .equipment{display:flex;bottom:calc(153px + var(--safe-bottom));width:min(360px,calc(100% - 44px));gap:8px}.equipment>.equipment-slot:not(.weapon-choice){display:none}.weapon-choice{flex:1;min-width:0;height:62px;padding:7px 4px}.weapon-choice>svg{width:21px;height:21px;margin-bottom:5px}.weapon-choice .equipment-key{display:none}.weapon-choice .equipment-name{font-size:10px;letter-spacing:.4px}.weapon-choice .equipment-status{font-size:9px;margin-top:3px}.game-app[data-phase="flying"] .ship-status{bottom:calc(237px + var(--safe-bottom))}.game-app[data-phase="flying"] .radar-wrap{bottom:calc(225px + var(--safe-bottom))}}
+@media(pointer:coarse) and (min-width:600px){.game-app[data-phase="flying"] .equipment{bottom:calc(32px + var(--safe-bottom));width:300px}.game-app[data-phase="flying"] .ship-status{bottom:145px}.game-app[data-phase="flying"] .radar-wrap{bottom:136px}}
