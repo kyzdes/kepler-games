@@ -1,7 +1,7 @@
 import * as T from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SimplexNoise } from 'three/addons/math/SimplexNoise.js';
-import { mulberry32 } from './state';
+import { mulberry32 } from './state.ts';
 
 const white = new T.MeshStandardMaterial({ color: 0xc8d4dc, metalness: 0.62, roughness: 0.36 });
 const orange = new T.MeshStandardMaterial({ color: 0xbf5625, metalness: 0.5, roughness: 0.38 });

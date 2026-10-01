@@ -1,121 +1,29 @@
+import { $, icon, icons, pad, time, setText } from './ui/dom';
+import { mountApp } from './ui/shell';
+import { createFlightHud } from './ui/hud';
 import './style.css';
-import { createIcons, Orbit, Gem, Shield, HeartPulse, Crosshair, Flame, Magnet, Volume2, VolumeX, Maximize, Pause, HelpCircle, ArrowUpRight, ArrowRight, Play, RotateCcw, Wrench, ScanLine, Check, X, Mouse, Keyboard, ChevronRight } from 'lucide';
 import type { Game } from './game';
 import { LoadingScreen } from './loading';
-import { BOOST_DURATION } from './boost';
-import { SECTOR_SECONDS, SECTORS, TOTAL_SECTORS, UPGRADES, buyUpgrade, upgradeCost, rollUpgrades, WEAPON_UPGRADES } from './state';
+import { SECTORS, TOTAL_SECTORS, UPGRADES, buyUpgrade, upgradeCost, rollUpgrades, WEAPON_UPGRADES } from './state';
 import type { UpgradeId } from './state';
 
-const iconSet = { Orbit, Gem, Shield, HeartPulse, Crosshair, Flame, Magnet, Volume2, VolumeX, Maximize, Pause, HelpCircle, ArrowUpRight, ArrowRight, Play, RotateCcw, Wrench, ScanLine, Check, X, Mouse, Keyboard, ChevronRight };
-const icons = () => createIcons({ icons: iconSet, attrs: { 'stroke-width': 1.5 } });
-const icon = (name: string, cls = '') => `<i data-lucide="${name}" class="${cls}" aria-hidden="true"></i>`;
-const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-const pad = (n: number) => String(Math.floor(n)).padStart(2, '0');
-const time = (s: number) => `${pad(s / 60)}:${pad(s % 60)}`;
 let best = 0;
 try { const saved = Number(localStorage.getItem('kepler-best-v2')); if (Number.isFinite(saved) && saved >= 0) best = saved; } catch { /* A private browser can disable local storage. */ }
 
-$('app').innerHTML = `
-<main class="game-app" data-phase="ready">
-  <div id="scene" class="scene"></div>
-  <div class="lens-shade" aria-hidden="true"></div>
-  <div id="damage-flash" class="damage-flash" aria-hidden="true"></div>
-  <div class="frame-corner top-left" aria-hidden="true"></div><div class="frame-corner top-right" aria-hidden="true"></div>
-  <div class="frame-corner bottom-left" aria-hidden="true"></div><div class="frame-corner bottom-right" aria-hidden="true"></div>
-  <div id="hud" class="hud" hidden>
-    <header class="flight-header">
-      <div class="identity">${icon('orbit', 'brand-mark')}<div><div class="brand">КЕПЛЕР<span> : </span>ДРЕЙФ</div><div class="brand-subtitle">ОРБИТАЛЬНАЯ ЭКСПЕДИЦИЯ</div></div></div>
-      <div class="route" aria-label="Прогресс экспедиции"><div id="route-stops" class="route-stops"><span class="current">1</span><b></b><span>2</span><b></b><span>3</span></div><div class="flight-time"><span id="flight-time">00:00</span><span class="time-divider">/</span>${time(SECTOR_SECONDS * TOTAL_SECTORS)}</div></div>
-      <div class="header-right"><div class="ore-display">${icon('gem')}<div><span class="micro-label">РУДА</span><strong id="ore-value">0</strong></div><span id="ore-gain" class="ore-gain"></span></div><button id="armory-button" class="armory-button" title="Улучшить оружие · U" aria-label="Улучшить оружие за руду">${icon('crosshair')}<span>Оружие</span><kbd>U</kbd></button><div class="header-actions">
-        <button id="sound-button" class="icon-button" aria-label="Выключить звук" title="Звук · M">${icon('volume-2')}</button>
-        <button id="help-button" class="icon-button" aria-label="Управление" title="Управление · H">${icon('help-circle')}</button>
-        <button id="fullscreen-button" class="icon-button fullscreen-button" aria-label="На весь экран" title="На весь экран · F">${icon('maximize')}</button>
-        <button id="pause-button" class="icon-button" aria-label="Пауза" title="Пауза · Esc">${icon('pause')}</button>
-      </div></div>
-    </header>
-    <div class="sector-info"><div class="sector-line"><span id="sector-number">СЕКТОР 01</span><span class="live-dot"></span><span id="sector-state">ОЖИДАНИЕ СТАРТА</span></div><h2 id="sector-name">ВНЕШНИЙ ПОЯС</h2><div class="sector-track"><span id="sector-progress"></span></div><div class="flight-readout"><span>СКОРОСТЬ <b id="flight-speed">18</b> М/С</span><span>БОЧКА <b id="roll-status">ГОТОВА</b></span></div><div class="roll-shortcut"><kbd>A / D</kbd><span>+</span><kbd>ПРОБЕЛ</kbd><span>БОЧКА</span></div></div>
-    <div id="reticle" class="reticle" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="23" stroke-dasharray="22 14"/><path d="M32 2v7M32 55v7M2 32h7M55 32h7"/><circle class="reticle-dot" cx="32" cy="32" r="1.4"/></svg></div>
-    <div id="target-info" class="target-info" hidden><span id="target-label">РУДНЫЙ АСТЕРОИД</span><div><i id="target-health"></i></div></div>
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <div class="ship-status"><div class="status-row">${icon('shield')}<div class="status-data"><div class="status-label"><span>ЩИТ</span><span><b id="shield-value">75</b><small id="shield-max"> / 75</small></span></div><div class="status-track shield-track"><i id="shield-fill"></i></div></div></div><div class="status-row">${icon('heart-pulse')}<div class="status-data"><div class="status-label"><span>КОРПУС</span><span><b id="hull-value">100</b><small> / 100</small></span></div><div class="status-track hull-track"><i id="hull-fill"></i></div></div></div><div class="ship-id"><span class="live-dot"></span>KEP–01<span>РАЗВЕДЧИК</span></div></div>
-    <div class="equipment" aria-label="Системы корабля">
-      <button id="weapon-button" class="equipment-slot" aria-label="Выключить автоогонь" aria-pressed="true" title="Переключить автоогонь · Q"><span class="equipment-key">Q</span>${icon('crosshair')}<span class="equipment-name">ЛАЗЕР <b id="laser-level">I</b></span><span id="fire-status" class="equipment-status">АВТООГОНЬ · Q</span><i class="equipment-line orange-line"></i></button>
-      <button id="boost-button" class="equipment-slot" title="Форсаж на 6 секунд · Shift"><span class="equipment-key">SHIFT</span>${icon('flame')}<span class="equipment-name">ФОРСАЖ <b id="engine-level">I</b></span><span id="boost-status" class="equipment-status">ГОТОВ</span><i id="boost-fill" class="equipment-line blue-line"></i></button>
-      <div class="equipment-slot passive" title="Руда притягивается автоматически"><span class="equipment-key">АВТО</span>${icon('magnet')}<span class="equipment-name">МАГНИТ <b id="magnet-level">I</b></span><span class="equipment-status">АКТИВЕН</span><i class="equipment-line gold-line"></i></div>
-    </div>
-    <div class="radar-wrap"><div class="radar-top"><span>СКАНЕР</span><span>120 М</span></div><canvas id="radar" width="320" height="320" aria-label="Радар астероидов перед кораблём"></canvas><div class="radar-legend"><i></i>РУДА<span></span>АСТЕРОИД</div></div>
-    <footer class="flight-footer"><span class="controls-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> МАНЁВР<span class="hint-divider"></span><kbd>ЛКМ</kbd> ОГОНЬ<span class="hint-divider"></span><kbd>SHIFT</kbd> ФОРСАЖ</span><span class="objective">Пройдите пояс. Сохраните корабль.</span><span class="version-label">ЭКСПЕДИЦИЯ 01</span></footer>
-    <div class="touch-controls"><div id="joystick" class="joystick" aria-label="Маневрирование"><div id="joystick-knob"></div></div><div class="touch-right"><div class="touch-maneuvers"><button id="touch-roll" aria-label="Бочка в сторону джойстика">${icon('rotate-ccw')}<span>БОЧКА</span></button><button id="touch-boost" aria-label="Форсаж на 6 секунд">${icon('flame')}</button></div><button id="touch-fire" aria-label="Стрелять">${icon('crosshair')}<span>ОГОНЬ</span></button></div></div>
-  </div>
-  <section id="intro" class="intro" hidden><div class="intro-panel"><h1>Кеплер:<br/><span>Дрейф</span></h1><p>На краю известного космоса<br/>богатство скрывается в камне.</p><div class="expedition-details"><span>3 СЕКТОРА</span><i></i><span>ОДНА ПОПЫТКА</span></div><button id="launch-button" class="primary-button">Начать экспедицию ${icon('arrow-up-right')}</button><button id="intro-help" class="text-button">${icon('keyboard')} Управление</button><div id="best-start" class="best-start"></div></div><div class="intro-caption"><span></span>ПОЯС КЕПЛЕРА<br/><small>Внешняя граница исследованного пространства</small></div></section>
-  <div id="overlay" class="overlay" hidden></div>
-</main>`;
-icons();
+mountApp();
 let game: Game;
 let offer: UpgradeId[] = [];
 let purchased = new Set<UpgradeId>();
 let toastTimer: ReturnType<typeof setTimeout>;
-let lastOre = 0;
-let gainTimer: ReturnType<typeof setTimeout>;
 let helpOpen = false;
 let resumeAfterHelp = false;
 let armoryFeedback = '';
-let weaponHintShown = false;
 const overlay = $('overlay');
 const root = document.querySelector('.game-app') as HTMLElement;
-const radarContext = ($('radar') as HTMLCanvasElement).getContext('2d')!;
 
 function toast(message: string): void { $('toast').textContent = message; $('toast').classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 3000); }
 function sound(muted: boolean): void { $('sound-button').innerHTML = icon(muted ? 'volume-x' : 'volume-2'); $('sound-button').setAttribute('aria-label', muted ? 'Включить звук' : 'Выключить звук'); icons(); }
-function setText(id: string, value: string): void { const e = $(id); if (e.textContent !== value) e.textContent = value; }
-function update(g: Game): void {
-  const r = g.run;
-  setText('ore-value', r.ore.toLocaleString('ru-RU'));
-  if (r.ore > lastOre && r.phase === 'flying') { $('ore-gain').textContent = `+${r.ore - lastOre}`; $('ore-gain').classList.add('show'); clearTimeout(gainTimer); gainTimer = setTimeout(() => $('ore-gain').classList.remove('show'), 1000); }
-  lastOre = r.ore;
-  setText('flight-time', time(r.elapsed)); setText('shield-value', String(Math.ceil(r.shield))); setText('shield-max', ` / ${r.maxShield}`); setText('hull-value', String(Math.ceil(r.hull)));
-  $('shield-fill').style.transform = `scaleX(${r.shield / r.maxShield})`; $('hull-fill').style.transform = `scaleX(${r.hull / 100})`;
-  $('hull-fill').classList.toggle('critical', r.hull < 30);
-  $('sector-progress').style.transform = `scaleX(${r.sectorTime / SECTOR_SECONDS})`;
-  $('boost-fill').style.transform = `scaleX(${g.boostTime>0 ? g.boostTime/BOOST_DURATION : 1-g.boostCooldown/r.boostCooldown})`;
-  setText('flight-speed', String(Math.round(g.forwardSpeed)));
-  setText('roll-status', g.roll.active ? 'ВРАЩЕНИЕ' : g.roll.cooldown > 0 ? `${g.roll.cooldown.toFixed(1)} С` : 'ГОТОВА');
-  $('roll-status').classList.toggle('recharging', g.roll.cooldown > 0);
-  ($('touch-roll') as HTMLButtonElement).disabled = g.roll.cooldown > 0;
-  setText('boost-status', g.boostTime>0 ? `ФОРСАЖ ${g.boostTime.toFixed(1)} С` : g.boostCooldown>0 ? `ЗАРЯД ${g.boostCooldown.toFixed(1)} С` : 'ГОТОВ · 6 С');
-  $('boost-button').classList.toggle('boosting',g.boostTime>0);
-  for(const id of ['boost-button','touch-boost']) ($(id) as HTMLButtonElement).disabled=g.boostTime>0 || g.boostCooldown>0;
-  const affordable=WEAPON_UPGRADES.some(id=>!(id==='multishot' && r.multishot) && r.ore>=upgradeCost(r,id));
-  $('armory-button').classList.toggle('affordable',affordable);
-  if(!weaponHintShown && affordable && r.phase==='flying') { weaponHintShown=true; toast('Руды хватит на улучшение. Откройте «Оружие» · U.'); }
-  $('boost-button').classList.toggle('cooldown', g.boostCooldown > 0);
-  $('weapon-button').classList.toggle('active', g.autoFire); $('weapon-button').setAttribute('aria-pressed', String(g.autoFire)); $('weapon-button').setAttribute('aria-label', g.autoFire ? 'Выключить автоогонь' : 'Включить автоогонь');
-  setText('fire-status', g.autoFire ? 'АВТООГОНЬ · Q' : 'РУЧНОЙ ОГОНЬ');
-  const numerals = ['0', 'I', 'II', 'III', 'IV', 'V'];
-  for (const id of ['laser', 'engine', 'magnet'] as const) setText(`${id}-level`, numerals[r.levels[id]] || String(r.levels[id]));
-  $('damage-flash').style.opacity = String(g.damageFlash * .48);
-  $('reticle').style.left = `${(g.pointer.x + 1) * 50}%`; $('reticle').style.top = `${(1 - g.pointer.y) * 50}%`; $('reticle').classList.toggle('locked', !!g.target);
-  const target = g.targetScreen(); $('target-info').hidden = !target;
-  if (target) { $('target-info').style.left = `${target.x}px`; $('target-info').style.top = `${target.y}px`; $('target-health').style.transform = `scaleX(${Math.max(0, target.health)})`; setText('target-label', target.ore ? 'РУДНЫЙ АСТЕРОИД' : 'СИЛИКАТНЫЙ АСТЕРОИД'); }
-  drawRadar(g);
-}
-
-function drawRadar(g: Game): void {
-  const ctx = radarContext; ctx.clearRect(0, 0, 320, 320); ctx.save(); ctx.translate(160, 160);
-  ctx.fillStyle = 'rgba(5,16,26,.35)'; ctx.beginPath(); ctx.arc(0, 0, 140, 0, Math.PI * 2); ctx.fill();
-  ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(157,198,223,.23)';
-  for (const r of [48, 94, 140]) { ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke(); }
-  ctx.beginPath(); ctx.moveTo(-148, 0); ctx.lineTo(148, 0); ctx.moveTo(0, -148); ctx.lineTo(0, 148); ctx.stroke();
-  ctx.strokeStyle = 'rgba(157,198,223,.4)'; ctx.setLineDash([2, 15]); ctx.beginPath(); ctx.arc(0, 0, 147, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-  for (const rock of g.rocks) {
-    if (rock.wait > 0 || rock.root.position.z < -120 || rock.root.position.z > 12) continue;
-    const x = (rock.root.position.x - g.ship.root.position.x) * 3.5, y = rock.root.position.z * 1.02 + 50;
-    if (Math.hypot(x, y) > 132) continue;
-    ctx.fillStyle = rock.ore ? '#eab66e' : '#738995'; ctx.globalAlpha = .45 + (1 + rock.root.position.z / 120) * .5;
-    ctx.beginPath(); ctx.arc(x, y, rock.radius > 3 ? 4.5 : 3, 0, Math.PI * 2); ctx.fill();
-  }
-  ctx.globalAlpha = 1; ctx.fillStyle = '#d2efff'; ctx.beginPath(); ctx.moveTo(0, 38); ctx.lineTo(-7, 59); ctx.lineTo(0, 54); ctx.lineTo(7, 59); ctx.closePath(); ctx.fill(); ctx.restore();
-}
+const { update, resetWeaponHint } = createFlightHud(toast);
 
 function showOverlay(html: string, label: string): void {
   overlay.innerHTML = html; overlay.hidden = false; overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); overlay.setAttribute('aria-label', label); icons();
@@ -126,7 +34,7 @@ function phase(g: Game): void {
   $('intro').hidden = g.run.phase !== 'ready';
   $('pause-button').hidden = ['ready','ended','upgrade','armory'].includes(g.run.phase);
   $('armory-button').hidden = !['flying','paused'].includes(g.run.phase);
-  if(g.run.phase==='flying' && g.run.elapsed===0) { weaponHintShown=false; armoryFeedback=''; }
+  if(g.run.phase==='flying' && g.run.elapsed===0) { resetWeaponHint(); armoryFeedback=''; }
   setText('sector-number', `СЕКТОР ${pad(g.run.sector)}`); setText('sector-name', SECTORS[g.run.sector - 1]);
   setText('sector-state', g.run.phase === 'ready' ? 'ОЖИДАНИЕ СТАРТА' : ['paused','armory'].includes(g.run.phase) ? 'ПАУЗА' : 'В ПОЛЁТЕ');
   $('route-stops').querySelectorAll('span').forEach((e, i) => { e.classList.toggle('current', i + 1 === g.run.sector); e.classList.toggle('complete', i + 1 < g.run.sector); });
