@@ -7,7 +7,11 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { createEnvironment } from './environment';
 import type { SpaceEnvironment } from './environment';
-import { createShip, createRock, rockGeometry, crystal } from './models';
+import { createShip, createRock, rockGeometry } from './models';
+import type { Rock } from './asteroids';
+import { Projectiles } from './projectiles';
+import { Salvage } from './salvage';
+import { FlightEffects } from './flight-effects';
 import { GameAudio } from './audio';
 import { PointerFire, horizontalInput, rollDirection } from './input';
 import { BarrelRoll, ROLL_PROTECTION } from './maneuvers';
@@ -18,17 +22,10 @@ import { BoostBlurShader } from './boost-blur';
 import { SECTOR_TEXTURE_URLS } from './sectors';
 import { paintLoadingFrame } from './loading';
 import type { LoadingProgress } from './loading';
-import { createRun, clamp, damageShip, collectOre, segmentSphereHit, mulberry32, asteroidOre, splitOre, flightSpeed, SECTOR_SECONDS, TOTAL_SECTORS } from './state';
+import { createRun, clamp, damageShip, collectOre, mulberry32, flightSpeed, SECTOR_SECONDS, TOTAL_SECTORS } from './state';
 import type { Run } from './state';
 
-interface Rock { root: T.Group; radius: number; hp: number; maxHp: number; ore: boolean; spin: T.Vector3; wait: number; }
-interface Bullet { mesh: T.Mesh; velocity: T.Vector3; life: number; }
-interface Ore { mesh: T.Mesh; velocity: T.Vector3; life: number; value: number; }
-interface Particle { position: T.Vector3; velocity: T.Vector3; life: number; maxLife: number; color: T.Color; size: number; }
 export interface GameHooks { update(game: Game): void; phase(game: Game): void; toast(text: string): void; help(): void; sound(muted: boolean): void; }
-
-const UP = new T.Vector3(0, 1, 0);
-const MAX_PARTICLES = 950;
 
 export class Game {
   run: Run = createRun();
@@ -46,18 +43,11 @@ export class Game {
   readonly velocity = new T.Vector2();
   readonly keys = new Set<string>();
   readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  private bullets: Bullet[] = [];
-  private ores: Ore[] = [];
-  private fragments: Bullet[] = [];
-  private particles: Particle[] = [];
-  private particlePositions = new Float32Array(MAX_PARTICLES * 3);
-  private particleColors = new Float32Array(MAX_PARTICLES * 3);
-  private particleSizes = new Float32Array(MAX_PARTICLES);
-  private particleGeo = new T.BufferGeometry();
+  private readonly projectiles = new Projectiles(this.scene);
+  private readonly salvage = new Salvage(this.scene, () => this.rng());
+  private readonly effects: FlightEffects;
   private cosmos: SpaceEnvironment | null = null;
   private ray = new T.Raycaster();
-  private shotGeometry = new T.CylinderGeometry(.038, .065, 2.4, 6);
-  private shotMaterial = new T.MeshBasicMaterial({ color: new T.Color(5, 1.6, .35), toneMapped: false });
   private rng = mulberry32(Date.now());
   private lastFrame = 0;
   private flightClock = 0;
@@ -74,7 +64,6 @@ export class Game {
   private tmp = new T.Vector3();
   private tmp2 = new T.Vector3();
   private startPoint = new T.Vector3();
-  private targetPoint = new T.Vector3();
   private aimPoint = new T.Vector3();
   private touchDevice = matchMedia('(pointer: coarse)').matches;
   private readonly boostDrive = new BoostDrive();
@@ -116,7 +105,7 @@ export class Game {
     this.scene.add(this.ship.root);
     this.camera.position.set(0, 4, 18.2);
     this.camera.lookAt(0, 1.5, -35);
-    this.prepareParticles();
+    this.effects = new FlightEffects(this.scene, () => this.rng());
     this.bindControls();
     this.resize();
     this.cameraRig.reset(this.camera);
@@ -219,9 +208,7 @@ export class Game {
     this.velocity.set(0, 0); this.touchMove.set(0, 0); this.pointer.set(0, 0); this.keys.clear(); this.fireInput.clear();
     this.boostDrive.reset(); this.boostBlurPass.enabled=false;
     this.flightClock = this.shotClock = this.invulnerable = 0; this.lastDamage = -20; this.flash = 0;
-    this.bullets.forEach(b => this.scene.remove(b.mesh)); this.bullets = [];
-    this.ores.forEach(o => this.scene.remove(o.mesh)); this.ores = []; this.particles = [];
-    this.fragments.forEach(f => this.scene.remove(f.mesh)); this.fragments = [];
+    this.projectiles.reset(); this.salvage.reset(); this.effects.reset();
     this.rocks.forEach((rock, i) => this.placeRock(rock, true, i));
     this.audio.start(); this.audio.setFlying(true);
     this.hooks.phase(this); this.hooks.toast('Держите курс. Золотые жилы содержат руду.');
@@ -265,7 +252,7 @@ export class Game {
     this.cosmos?.setSector(this.run.sector);
     this.run.shield = this.run.maxShield;
     this.rocks.forEach(r => { if (r.root.position.z > -45) this.placeRock(r); });
-    this.bullets.forEach(b => this.scene.remove(b.mesh)); this.bullets = [];
+    this.projectiles.reset();
     this.keys.clear(); this.fireInput.clear(); this.audio.setFlying(true); this.hooks.phase(this); this.hooks.toast(`Сектор ${this.run.sector}. Плотность астероидов растёт.`);
   }
 
@@ -361,7 +348,7 @@ export class Game {
       if (this.invulnerable <= 0 && this.shipCollider.intersectsRock(this.startPoint, rock.root.position, rock.radius * .93)) {
         const shieldBefore = this.run.shield, hullBefore = this.run.hull;
         damageShip(this.run, 22 + rock.radius * 3); this.lastDamage = this.flightClock; this.invulnerable = 1.5; this.flash = 1;
-        this.burst(rock.root.position, new T.Color(1, .36, .08), 28, 8); this.audio.hit(); this.hideRock(rock);
+        this.effects.burst(rock.root.position, new T.Color(1, .36, .08), 28, 8); this.audio.hit(); this.hideRock(rock);
         if (this.run.phase === 'ended') { this.finish(false); return; }
         const hullLost = Math.ceil(hullBefore - this.run.hull), shieldLost = Math.ceil(shieldBefore - this.run.shield);
         this.hooks.toast(hullLost > 0
@@ -371,17 +358,19 @@ export class Game {
     }
     this.shotClock -= dt;
     if ((this.shooting || this.autoFire) && this.shotClock <= 0) { this.fire(); this.shotClock = this.run.fireInterval; }
-    this.tickBullets(dt);
-    this.tickOre(dt, worldSpeed);
-    this.tickParticles(dt);
-    for (let i = this.fragments.length - 1; i >= 0; i--) {
-      const f = this.fragments[i]; f.life -= dt; f.mesh.position.addScaledVector(f.velocity, dt); f.mesh.rotation.x += dt; f.mesh.rotation.z += dt * .7;
-      if (f.life < .7) f.mesh.scale.multiplyScalar(Math.exp(-dt * 3));
-      if (f.life <= 0) { this.scene.remove(f.mesh); this.fragments.splice(i, 1); }
-    }
+    this.projectiles.update(dt, this.rocks, this.run.damage, (rock, position) => {
+      this.effects.burst(position, new T.Color(1.8, .65, .15), 5, 4);
+      if (rock.hp <= 0) this.breakRock(rock);
+    });
+    this.salvage.update(dt, worldSpeed, this.ship.root.position, this.run.magnet, (value, position) => {
+      collectOre(this.run, value);
+      if (this.flightClock - this.lastPickupSound > .07) { this.audio.pickup(); this.lastPickupSound = this.flightClock; }
+      this.effects.burst(position, new T.Color(1, .7, .24), 3, 1.5);
+    });
+    this.effects.update(dt);
     if (this.run.sectorTime >= SECTOR_SECONDS) {
       // A sector transfer finishes the tractor collection before the equipment bay opens.
-      this.ores.forEach(o => { collectOre(this.run, o.value); this.scene.remove(o.mesh); }); this.ores = [];
+      this.salvage.collectAll(value => collectOre(this.run, value));
       if (this.run.sector === TOTAL_SECTORS) this.finish(true);
       else { this.run.phase = 'upgrade'; this.keys.clear(); this.fireInput.clear(); this.audio.setFlying(false); this.audio.upgrade(); this.hooks.phase(this); }
     }
@@ -401,115 +390,23 @@ export class Game {
   }
 
   private fire(): void {
-    this.nearestTarget();
-    for (const muzzle of this.ship.muzzles) {
-      muzzle.getWorldPosition(this.startPoint);
-      const spreads = this.run.multishot ? [-.032, 0, .032] : [0];
-      for (const spread of spreads) {
-        const direction = this.aimPoint.clone().sub(this.startPoint).normalize(); direction.x += spread; direction.normalize();
-        const bullet = new T.Mesh(this.shotGeometry, this.shotMaterial); bullet.position.copy(this.startPoint); bullet.quaternion.setFromUnitVectors(UP, direction); this.scene.add(bullet);
-        this.bullets.push({ mesh: bullet, velocity: direction.multiplyScalar(160), life: 1.8 });
-      }
-    }
+    this.projectiles.fire(this.ship.muzzles, this.nearestTarget(), this.run.multishot);
     this.audio.shot();
-  }
-
-  private tickBullets(dt: number): void {
-    for (let i = this.bullets.length - 1; i >= 0; i--) {
-      const b = this.bullets[i]; b.life -= dt;
-      this.startPoint.copy(b.mesh.position); this.targetPoint.copy(this.startPoint).addScaledVector(b.velocity, dt);
-      let hit: Rock | null = null, nearest = 2;
-      for (const rock of this.rocks) {
-        if (rock.wait > 0) continue;
-        const p = rock.root.position;
-        const t = segmentSphereHit(this.startPoint.x, this.startPoint.y, this.startPoint.z, this.targetPoint.x, this.targetPoint.y, this.targetPoint.z, p.x, p.y, p.z, rock.radius * .93);
-        if (t !== null && t < nearest) { nearest = t; hit = rock; }
-      }
-      if (hit) {
-        hit.hp -= this.run.damage; this.tmp.copy(this.startPoint).lerp(this.targetPoint, nearest);
-        this.burst(this.tmp, new T.Color(1.8, .65, .15), 5, 4); b.life = 0;
-        if (hit.hp <= 0) this.breakRock(hit);
-      }
-      b.mesh.position.copy(this.targetPoint);
-      if (b.life <= 0) { this.scene.remove(b.mesh); this.bullets.splice(i, 1); }
-    }
   }
 
   private breakRock(rock: Rock): void {
     this.run.kills++;
-    this.burst(rock.root.position, new T.Color(1.3, .63, .19), 34, 9);
-    this.burst(rock.root.position, new T.Color(.24, .3, .38), 20, 5);
+    this.effects.burst(rock.root.position, new T.Color(1.3, .63, .19), 34, 9);
+    this.effects.burst(rock.root.position, new T.Color(.24, .3, .38), 20, 5);
     const offset=rock.root.position.x-this.ship.root.position.x;
     const distance=rock.root.position.distanceTo(this.ship.root.position);
     this.audio.rock(rock.radius,offset/Math.max(16,distance*.35),distance);
     const source = rock.root.children[0] as T.Mesh;
-    for (let i = 0; i < 5 && this.fragments.length < 80; i++) {
-      const fragment = new T.Mesh(source.geometry, source.material); fragment.position.copy(rock.root.position); fragment.scale.setScalar(rock.radius * (.12 + this.rng() * .12)); this.scene.add(fragment);
-      this.fragments.push({ mesh: fragment, velocity: new T.Vector3(this.rng() - .5, this.rng() - .5, this.rng() - .15).normalize().multiplyScalar(4 + this.rng() * 5), life: 1.7 + this.rng() });
-    }
-    const reward = asteroidOre(rock.radius, rock.ore);
-    const values = splitOre(reward, Math.min(5, Math.ceil(rock.radius), 150 - this.ores.length));
-    // Keep the reward when the visual pool is full: merge it into the nearest
-    // existing ore cluster rather than awarding extra ore or discarding it.
-    if (!values.length && this.ores.length) {
-      const nearest = this.ores.reduce((a, b) => a.mesh.position.distanceToSquared(rock.root.position) < b.mesh.position.distanceToSquared(rock.root.position) ? a : b);
-      nearest.value += reward; nearest.life = Math.max(nearest.life, 18);
-    }
-    for (const value of values) {
-      const ore = crystal(); ore.scale.set(.19, .34 + this.rng() * .19, .22);
-      ore.position.copy(rock.root.position).add(this.tmp.set(this.rng() - .5, this.rng() - .5, this.rng() - .5).multiplyScalar(rock.radius * 1.1));
-      this.scene.add(ore);
-      this.ores.push({ mesh: ore, velocity: new T.Vector3((this.rng() - .5) * 3, (this.rng() - .5) * 3, 3 + this.rng() * 4), life: 18, value });
-    }
+    this.effects.shatter(source, rock.root.position, rock.radius);
+    this.salvage.drop(rock.root.position, rock.radius, rock.ore);
     this.hideRock(rock);
   }
   private hideRock(rock: Rock): void { rock.wait = 1.2 + this.rng() * 2; rock.root.visible = false; }
-
-  private tickOre(dt: number, worldSpeed: number): void {
-    for (let i = this.ores.length - 1; i >= 0; i--) {
-      const ore = this.ores[i]; ore.life -= dt;
-      this.tmp.copy(this.ship.root.position).sub(ore.mesh.position); const distance = this.tmp.length();
-      if (distance < this.run.magnet) ore.velocity.lerp(this.tmp.normalize().multiplyScalar(22 + (this.run.magnet - distance) * 1.2), 1 - Math.exp(-dt * 4));
-      else ore.velocity.z += (worldSpeed - ore.velocity.z) * dt * .5;
-      ore.mesh.position.addScaledVector(ore.velocity, dt); ore.mesh.rotation.y += dt * 2; ore.mesh.rotation.z += dt * .65;
-      if (distance < 1.6) {
-        collectOre(this.run, ore.value);
-        if (this.flightClock - this.lastPickupSound > .07) { this.audio.pickup(); this.lastPickupSound = this.flightClock; }
-        this.burst(ore.mesh.position, new T.Color(1, .7, .24), 3, 1.5); ore.life = 0;
-      }
-      if (ore.life <= 0 || ore.mesh.position.z > 25) { this.scene.remove(ore.mesh); this.ores.splice(i, 1); }
-    }
-  }
-
-  private prepareParticles(): void {
-    this.particleGeo.setAttribute('position', new T.BufferAttribute(this.particlePositions, 3).setUsage(T.DynamicDrawUsage));
-    this.particleGeo.setAttribute('color', new T.BufferAttribute(this.particleColors, 3).setUsage(T.DynamicDrawUsage));
-    this.particleGeo.setAttribute('size', new T.BufferAttribute(this.particleSizes, 1).setUsage(T.DynamicDrawUsage));
-    this.particleGeo.setDrawRange(0, 0);
-    const m = new T.ShaderMaterial({ vertexColors: true, transparent: true, blending: T.AdditiveBlending, depthWrite: false,
-      vertexShader: 'attribute float size;varying vec3 vColor;void main(){vColor=color;vec4 p=modelViewMatrix*vec4(position,1.);gl_PointSize=clamp(size*340./-p.z,1.,28.);gl_Position=projectionMatrix*p;}',
-      fragmentShader: 'varying vec3 vColor;void main(){float d=length(gl_PointCoord-vec2(.5));if(d>.5)discard;gl_FragColor=vec4(vColor,pow(1.-d*2.,1.5));}' });
-    const particles = new T.Points(this.particleGeo, m); particles.frustumCulled = false; this.scene.add(particles);
-  }
-  private burst(position: T.Vector3, color: T.Color, count: number, speed: number): void {
-    for (let i = 0; i < count && this.particles.length < MAX_PARTICLES; i++) {
-      const life = .35 + this.rng() * .9;
-      this.particles.push({ position: position.clone(), velocity: new T.Vector3(this.rng() - .5, this.rng() - .5, this.rng() - .5).normalize().multiplyScalar(speed * (.2 + this.rng())), life, maxLife: life, color, size: .14 + this.rng() * .28 });
-    }
-  }
-  private tickParticles(dt: number): void {
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i]; p.life -= dt;
-      if (p.life <= 0) { this.particles.splice(i, 1); continue; }
-      p.position.addScaledVector(p.velocity, dt); p.velocity.multiplyScalar(Math.exp(-dt * 1.5));
-    }
-    this.particles.forEach((p, i) => {
-      p.position.toArray(this.particlePositions, i * 3); const alpha = p.life / p.maxLife;
-      this.particleColors[i * 3] = p.color.r * alpha; this.particleColors[i * 3 + 1] = p.color.g * alpha; this.particleColors[i * 3 + 2] = p.color.b * alpha; this.particleSizes[i] = p.size;
-    });
-    this.particleGeo.attributes.position.needsUpdate = this.particleGeo.attributes.color.needsUpdate = this.particleGeo.attributes.size.needsUpdate = true;
-    this.particleGeo.setDrawRange(0, this.particles.length);
-  }
 
   private updateTarget(): void {
     this.target = null;
@@ -529,7 +426,7 @@ export class Game {
     return { x: (this.tmp2.x + 1) / 2 * this.host.clientWidth, y: (1 - this.tmp2.y) / 2 * this.host.clientHeight, health: this.target.hp / this.target.maxHp, ore: this.target.ore };
   }
   get damageFlash(): number { return this.flash; }
-  get oreCount(): number { return this.ores.length; }
+  get oreCount(): number { return this.salvage.count; }
   private finish(won: boolean): void {
     this.run.phase = 'ended'; this.run.won = won; this.keys.clear(); this.touchMove.set(0, 0); this.fireInput.clear(); this.audio.setFlying(false); this.hooks.phase(this);
   }

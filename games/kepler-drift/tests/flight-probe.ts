@@ -1,5 +1,7 @@
 import * as T from 'three';
 import { Game } from '../src/game';
+import type { Projectiles } from '../src/projectiles';
+import type { Salvage } from '../src/salvage';
 import { asteroidOre, buyUpgrade, flightSpeed, mulberry32, SECTOR_SECONDS } from '../src/state';
 import { PlanetStorm } from '../src/storm';
 import { StableFlightCamera } from '../src/camera';
@@ -17,7 +19,7 @@ game.renderer.setAnimationLoop(null);
 type Rock = Game['rocks'][number];
 const sim = game as unknown as {
   tickFlight(dt: number): void; breakRock(rock: Rock): void;
-  bullets: unknown[]; ores: {value: number; mesh: T.Mesh}[];
+  projectiles: Projectiles; salvage: Salvage;
   invulnerable: number; rng: () => number;
   frame(): void; lastFrame: number; fire():void;
 };
@@ -43,13 +45,13 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
   const checks: {name:string; passed:boolean; details?:unknown}[] = [];
   const record = (name:string, passed:boolean, details?:unknown) => checks.push({name, passed, details});
   game.start(); clearRocks(); step();
-  record('Старт включает автоогонь и выпускает снаряды', game.autoFire && sim.bullets.length > 0);
+  record('Старт включает автоогонь и выпускает снаряды', game.autoFire && sim.projectiles.count > 0);
   key('KeyQ'); key('KeyQ','keyup');
   record('Q отключает автоогонь', !game.autoFire);
   game.start(); clearRocks();
   record('Повторный старт возвращает автоогонь', game.autoFire);
   fresh(); key('Space'); step();
-  record('Один пробел не запускает бочку и не стреляет', !game.roll.active && sim.bullets.length === 0);
+  record('Один пробел не запускает бочку и не стреляет', !game.roll.active && sim.projectiles.count === 0);
   key('Space','keyup'); key('KeyA'); key('Space'); step(24);
   record('A + пробел запускает вращение и уклонение влево', game.roll.active && game.ship.root.rotation.z > .5 && game.ship.root.position.x < -1);
   key('KeyA','keyup'); key('Space','keyup');
@@ -95,9 +97,9 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
     const rock=game.rocks[i % game.rocks.length]; rock.radius=1+(i%6); rock.ore=i%4!==3;
     rock.root.position.set(0,0,-30); expected+=asteroidOre(rock.radius,rock.ore); sim.breakRock(rock);
   }
-  record('Общая награда сохраняется при заполнении пула кристаллов', sim.ores.length===150 && sim.ores.reduce((sum,ore)=>sum+ore.value,0)===expected, {crystals:sim.ores.length, ore:expected});
+  record('Общая награда сохраняется при заполнении пула кристаллов', sim.salvage.drops.length===150 && sim.salvage.drops.reduce((sum,ore)=>sum+ore.value,0)===expected, {crystals:sim.salvage.drops.length, ore:expected});
   clearRocks(); game.run.sectorTime=SECTOR_SECONDS-1/120; step();
-  record('На переходе в мастерскую руда собрана ровно один раз', game.run.phase==='upgrade' && game.run.ore===expected && sim.ores.length===0);
+  record('На переходе в мастерскую руда собрана ровно один раз', game.run.phase==='upgrade' && game.run.ore===expected && sim.salvage.drops.length===0);
   const maps = () => ['Планета сектора','Панорама сектора'].map(name => {
     const mesh=game.scene.getObjectByName(name) as T.Mesh<T.BufferGeometry,T.MeshStandardMaterial>;
     return mesh.material.map?.name;
@@ -146,8 +148,8 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
     const rock=game.rocks[i]; rock.radius=3; rock.ore=true; rock.root.position.set(0,0,-25);
     salvage+=asteroidOre(rock.radius,true); sim.breakRock(rock);
   }
-  clearRocks(); sim.ores.forEach(ore=>ore.mesh.position.copy(game.ship.root.position)); step();
-  record('Руда из разрушенных астероидов попадает на баланс оружейной', game.run.ore===salvage && game.run.mined===salvage && sim.ores.length===0, {salvage,balance:game.run.ore});
+  clearRocks(); sim.salvage.drops.forEach(ore=>ore.mesh.position.copy(game.ship.root.position)); step();
+  record('Руда из разрушенных астероидов попадает на баланс оружейной', game.run.ore===salvage && game.run.mined===salvage && sim.salvage.drops.length===0, {salvage,balance:game.run.ore});
   game.boost(); step(30); key('KeyU'); key('KeyU','keyup');
   const armoryElapsed=game.run.elapsed, armoryBoost=game.boostTime;
   for(let i=0;i<20;i++) { sim.lastFrame=performance.now()-1000/30; sim.frame(); }
@@ -156,7 +158,7 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
   const laserBought=buyUpgrade(game.run,'laser'), tripleBought=buyUpgrade(game.run,'multishot');
   record('Собранная руда оплачивает лазер и тройной импульс', laserBought && tripleBought && game.run.ore===salvage-155 && game.run.mined===salvage && game.run.damage===baseDamage*1.35 && game.run.levels.laser===2);
   key('KeyU'); key('KeyU','keyup'); sim.fire();
-  record('Улучшенное оружие выпускает по три луча из каждого ствола', game.run.phase==='flying' && game.run.multishot && sim.bullets.length===game.ship.muzzles.length*3);
+  record('Улучшенное оружие выпускает по три луча из каждого ствола', game.run.phase==='flying' && game.run.multishot && sim.projectiles.count===game.ship.muzzles.length*3);
   game.pause(); game.openArmory(); game.closeArmory();
   record('Оружейная, открытая из паузы, возвращает на паузу', game.run.phase==='paused');
   game.start(); record('Новая экспедиция сбрасывает форсаж и купленное оружие', game.boostTime===0 && game.boostCooldown===0 && game.run.levels.laser===1 && !game.run.multishot);

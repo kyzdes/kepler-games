@@ -60,7 +60,7 @@ npm run build
 npm run preview
 ```
 
-Готовый сайт находится в `dist/`. У каждой игры собственный `package-lock.json`. При публикации проверены чистая установка зависимостей, 32 теста «Дрейфа», 22 теста «Апекса» и обе production-сборки. GitHub Actions повторяет тесты и сборку для каждой игры на push и pull request.
+Готовый сайт находится в `dist/`. У каждой игры собственный `package-lock.json`. Автоматические проверки: 39 тестов «Дрейфа», 26 тестов «Апекса» и обе production-сборки. GitHub Actions повторяет тесты и сборку для каждой игры на push и pull request.
 
 ## Структура
 
@@ -79,7 +79,7 @@ docs/              Публикация статических сборок
 third-party/       Лицензии сторонних компонентов
 ```
 
-Подробности: [Дрейф](games/kepler-drift/README.md), [Апекс](games/kepler-apex/README.md), [размещение на своём сервере](docs/DEPLOYMENT.md).
+Подробности: [Дрейф](games/kepler-drift/README.md), [Апекс](games/kepler-apex/README.md), [устройство игр](docs/ARCHITECTURE.md), [размещение на своём сервере](docs/DEPLOYMENT.md).
 
 ## Ресурсы и лицензии
 
