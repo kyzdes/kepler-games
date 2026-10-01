@@ -13,7 +13,10 @@ interface Fragment {
   mesh: T.Mesh;
   velocity: T.Vector3;
   life: number;
+  ownedMaterial?: T.Material;
+  cutPlane?: T.Plane;
 }
+interface Shockwave { mesh: T.Mesh<T.RingGeometry, T.MeshBasicMaterial>; age: number; radius: number; }
 
 const MAX_PARTICLES = 950;
 const MAX_FRAGMENTS = 80;
@@ -24,6 +27,8 @@ export class FlightEffects {
   private readonly rng: () => number;
   private readonly particles: Particle[] = [];
   private readonly fragments: Fragment[] = [];
+  private readonly waves: Shockwave[] = [];
+  private readonly waveGeometry = new T.RingGeometry(.96, 1, 64);
   private readonly positions = new Float32Array(MAX_PARTICLES * 3);
   private readonly colors = new Float32Array(MAX_PARTICLES * 3);
   private readonly sizes = new Float32Array(MAX_PARTICLES);
@@ -73,7 +78,37 @@ export class FlightEffects {
     }
   }
 
+  slice(source: T.Mesh, position: T.Vector3, direction: T.Vector3): void {
+    if (this.fragments.length > MAX_FRAGMENTS - 2) return;
+    const normal = new T.Vector3().crossVectors(direction, new T.Vector3(0, 1, 0)).normalize();
+    if (normal.lengthSq() < .5) normal.set(1, 0, 0);
+    for (const side of [-1, 1]) {
+      const plane = new T.Plane().setFromNormalAndCoplanarPoint(normal.clone().multiplyScalar(side), position);
+      const material = (source.material as T.Material).clone();
+      material.clippingPlanes = [plane]; material.clipShadows = false;
+      const mesh = new T.Mesh(source.geometry, material);
+      mesh.position.copy(position); source.getWorldQuaternion(mesh.quaternion); source.getWorldScale(mesh.scale);
+      this.scene.add(mesh);
+      this.fragments.push({ mesh, velocity: normal.clone().multiplyScalar(side * (3 + this.rng() * 2)).addScaledVector(direction, -2),
+        life: 1.8, ownedMaterial: material, cutPlane: plane });
+    }
+  }
+
+  shockwave(position: T.Vector3, radius: number, color: number): void {
+    if (this.waves.length >= 12) return;
+    const material = new T.MeshBasicMaterial({ color, transparent: true, opacity: .7,
+      side: T.DoubleSide, depthWrite: false, blending: T.AdditiveBlending, toneMapped: false });
+    const mesh = new T.Mesh(this.waveGeometry, material); mesh.position.copy(position);
+    mesh.scale.setScalar(.1); this.scene.add(mesh); this.waves.push({ mesh, age: 0, radius });
+  }
+
   update(dt: number): void {
+    for (let i = this.waves.length - 1; i >= 0; i--) {
+      const wave = this.waves[i]; wave.age += dt;
+      wave.mesh.scale.setScalar(wave.radius * Math.min(1, wave.age / .45));
+      wave.mesh.material.opacity = Math.max(0, .7 * (1 - wave.age / .7));
+      if (wave.age >= .7) { this.scene.remove(wave.mesh); wave.mesh.material.dispose(); this.waves.splice(i, 1); }
+    }
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const particle = this.particles[i];
       particle.life -= dt;
@@ -96,20 +131,23 @@ export class FlightEffects {
       const fragment = this.fragments[i];
       fragment.life -= dt;
       fragment.mesh.position.addScaledVector(fragment.velocity, dt);
-      fragment.mesh.rotation.x += dt;
-      fragment.mesh.rotation.z += dt * .7;
+      if (fragment.cutPlane) fragment.cutPlane.constant = -fragment.cutPlane.normal.dot(fragment.mesh.position);
+      else { fragment.mesh.rotation.x += dt; fragment.mesh.rotation.z += dt * .7; }
       if (fragment.life < .7) fragment.mesh.scale.multiplyScalar(Math.exp(-dt * 3));
       if (fragment.life <= 0) {
         this.scene.remove(fragment.mesh);
+        fragment.ownedMaterial?.dispose();
         this.fragments.splice(i, 1);
       }
     }
   }
 
   reset(): void {
+    for (const wave of this.waves) { this.scene.remove(wave.mesh); wave.mesh.material.dispose(); }
+    this.waves.length = 0;
     this.particles.length = 0;
     this.geometry.setDrawRange(0, 0);
-    for (const fragment of this.fragments) this.scene.remove(fragment.mesh);
+    for (const fragment of this.fragments) { this.scene.remove(fragment.mesh); fragment.ownedMaterial?.dispose(); }
     this.fragments.length = 0;
   }
 }

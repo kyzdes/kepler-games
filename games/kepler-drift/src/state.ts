@@ -9,15 +9,15 @@ export interface Run {
   levels: Record<UpgradeId, number>; won: boolean;
 }
 export const SECTOR_SECONDS = 75;
-export const TOTAL_SECTORS = 3;
-export const SECTORS = ['ВНЕШНИЙ ПОЯС', 'РАЗЛОМ КЕПЛЕРА', 'СЕРДЦЕ ПОЯСА'];
+export const SECTORS = ['ВНЕШНИЙ ПОЯС', 'РАЗЛОМ КЕПЛЕРА', 'СЕРДЦЕ ПОЯСА', 'ТУМАННОСТЬ ЭХО', 'ГРОЗОВОЙ ФРОНТ', 'КОРОНА КЕПЛЕРА'];
+export const TOTAL_SECTORS = SECTORS.length;
 export const UPGRADES: Record<UpgradeId, { name: string; description: string; cost: number; icon: string; color: string }> = {
-  laser: { name: 'Импульсный лазер', description: 'Урон +35%. Быстрее раскалывает крупные астероиды.', cost: 55, icon: 'crosshair', color: 'orange' },
+  laser: { name: 'Энергоконтур', description: 'Урон импульсов и плазмы +35%. Перезарядка резака −0,8 с, до 7,2 с.', cost: 55, icon: 'crosshair', color: 'orange' },
   engine: { name: 'Векторная тяга', description: 'Манёвренность +18%. Форсаж восстанавливается быстрее.', cost: 45, icon: 'flame', color: 'blue' },
   magnet: { name: 'Гравитационный захват', description: 'Радиус притяжения руды +45%. Меньше рискованных манёвров.', cost: 40, icon: 'magnet', color: 'gold' },
   shield: { name: 'Защитный контур', description: 'Ёмкость щита +25. Полностью восстанавливает щит.', cost: 60, icon: 'shield', color: 'blue' },
   repair: { name: 'Наноремонт', description: 'Восстанавливает 50 единиц корпуса и весь щит.', cost: 30, icon: 'wrench', color: 'gold' },
-  multishot: { name: 'Тройной импульс', description: 'Два дополнительных луча. Больше добычи за один залп.', cost: 100, icon: 'scan-line', color: 'orange' },
+  multishot: { name: 'Тройной залп', description: 'Три импульса из каждого ствола или три плазменных снаряда. На резак не влияет.', cost: 100, icon: 'scan-line', color: 'orange' },
 };
 export function createRun(): Run {
   return { phase: 'ready', sector: 1, sectorTime: 0, elapsed: 0, ore: 0, mined: 0, kills: 0,

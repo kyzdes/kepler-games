@@ -10,7 +10,7 @@ import { asteroidOre, collectOre, createRun, mulberry32 } from '../src/state.ts'
 function rock(z: number, hp = 30, wait = 0): Rock {
   const root = new T.Group();
   root.position.z = z;
-  return { root, radius: 1, hp, maxHp: hp, ore: true, spin: new T.Vector3(), wait };
+  return { root, radius: 1, hp, maxHp: hp, ore: true, kind: 'normal', spin: new T.Vector3(), wait };
 }
 
 test('a fast shot hits the nearest active asteroid once, regardless of array order', () => {
