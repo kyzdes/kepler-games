@@ -1,7 +1,10 @@
+import type { RunMode } from './expedition.ts';
+
 export type Phase = 'ready' | 'flying' | 'paused' | 'armory' | 'upgrade' | 'ended';
 export type UpgradeId = 'laser' | 'engine' | 'magnet' | 'shield' | 'repair' | 'multishot';
 export const WEAPON_UPGRADES = ['laser', 'multishot'] as const;
 export interface Run {
+  mode: RunMode; pirateKills: number; bossKills: number;
   phase: Phase; sector: number; sectorTime: number; elapsed: number;
   ore: number; mined: number; kills: number; hull: number; maxHull: number;
   shield: number; maxShield: number; damage: number; fireInterval: number;
@@ -19,8 +22,8 @@ export const UPGRADES: Record<UpgradeId, { name: string; description: string; co
   repair: { name: 'Наноремонт', description: 'Восстанавливает 50 единиц корпуса и весь щит.', cost: 30, icon: 'wrench', color: 'gold' },
   multishot: { name: 'Тройной залп', description: 'Три импульса из каждого ствола или три плазменных снаряда. На резак не влияет.', cost: 100, icon: 'scan-line', color: 'orange' },
 };
-export function createRun(): Run {
-  return { phase: 'ready', sector: 1, sectorTime: 0, elapsed: 0, ore: 0, mined: 0, kills: 0,
+export function createRun(mode: RunMode = 'expedition'): Run {
+  return { mode, pirateKills: 0, bossKills: 0, phase: 'ready', sector: 1, sectorTime: 0, elapsed: 0, ore: 0, mined: 0, kills: 0,
     hull: 100, maxHull: 100, shield: 75, maxShield: 75, damage: 14, fireInterval: 0.19,
     magnet: 21, speed: 11, boostCooldown: 4.5, multishot: false,
     levels: { laser: 1, engine: 1, magnet: 1, shield: 1, repair: 0, multishot: 0 }, won: false };

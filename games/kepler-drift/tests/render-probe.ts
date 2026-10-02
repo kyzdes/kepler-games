@@ -1,5 +1,5 @@
 import { Game } from '../src/game';
-import { TOTAL_SECTORS } from '../src/state';
+import { SECTOR_VISUALS } from '../src/sectors';
 import * as T from 'three';
 
 // Development-only regression fixture: sample the actual final framebuffer,
@@ -22,6 +22,7 @@ game.audio.start=()=>{};
 type ProbeMode = 'current' | 'legacy-msaa' | 'no-bloom';
 async function measure(mode: ProbeMode): Promise<void> {
   buttons.forEach(button => button.disabled = true);
+  delete result.dataset.complete;
   result.textContent = `Измерение: ${mode}…`;
   for (const target of [game.composer.renderTarget1, game.composer.renderTarget2]) {
     target.samples = mode === 'current' ? initialSamples : 2;
@@ -31,7 +32,7 @@ async function measure(mode: ProbeMode): Promise<void> {
   const means: number[] = [];
   const maxima: number[] = [];
   const errors: number[] = [];
-  for (let frame = 0; frame < TOTAL_SECTORS * 60; frame++) {
+  for (let frame = 0; frame < SECTOR_VISUALS.length * 60; frame++) {
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     if (frame % 60 === 0) atmosphere.cosmos.setSector(frame / 60 + 1);
     blur.boostBlurPass.enabled=frame%60>=20 && frame%60<40;
@@ -91,19 +92,47 @@ async function measure(mode: ProbeMode): Promise<void> {
     const error=gl.getError(); if(error) weaponErrors.push(error);
   }
   game.fireInput.clear(); game.pause();
+  const weaponKills=game.run.kills;
+  const encounterMeans:number[]=[],encounterErrors:number[]=[];
+  game.start();game.autoFire=false;
+  game.rocks.forEach(rock=>{rock.wait=999;rock.root.visible=false;});
+  for(const [i,index] of [0,3].entries()) {
+    const enemy=game.pirates.enemies[index];enemy.active=true;enemy.root.visible=true;
+    enemy.hp=enemy.maxHp=200;enemy.position.set(i?12:-11,2,i?-57:-37);enemy.previousPosition.copy(enemy.position);enemy.age=4;
+    enemy.attack.phase='charging';enemy.attack.remaining=.8;enemy.lockedAim.copy(game.ship.root.position);
+  }
+  for(let frame=0;frame<120;frame++) {
+    await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+    if(frame===60) {
+      game.run.sector=3;atmosphere.cosmos.setSector(3);game.boss.spawn(3);
+      game.boss.update(7.3,{player:game.ship.root.position,rocks:game.rocks,worldSpeed:game.forwardSpeed});
+      const target=game.boss.bodyTarget!.position.clone().project(game.camera);game.pointer.set(target.x,target.y);
+      game.selectWeapon('cutter');game.fireInput.press(7);
+    }
+    simulation.tickFlight(1/60);game.composer.render();
+    const pixels=new Uint8Array(gl.drawingBufferWidth*4);
+    gl.readPixels(0,Math.floor(gl.drawingBufferHeight*.5),gl.drawingBufferWidth,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+    let total=0;for(let i=0;i<pixels.length;i+=4) total+=(pixels[i]+pixels[i+1]+pixels[i+2])/3;
+    encounterMeans.push(total/gl.drawingBufferWidth);
+    const error=gl.getError();if(error)encounterErrors.push(error);
+  }
+  game.fireInput.clear();game.pause();
   // A stable black image must fail too: bloom alone can survive while the
   // sky, planet and ship are discarded. Three scanlines cover that distinction.
   const passed = drops === 0 && Math.min(...means) >= 15 && errors.length === 0 && centerDelta<.1 && edgeDelta>.1
-    && Math.min(...weaponMeans)>=15 && weaponErrors.length===0 && game.run.kills>=3;
+    && Math.min(...weaponMeans)>=15 && weaponErrors.length===0 && weaponKills>=3
+    && Math.min(...encounterMeans)>=15 && encounterErrors.length===0;
   result.textContent = JSON.stringify({
     passed, mode, frames: means.length, msaaSamples: game.composer.renderTarget1.samples,
     brightnessDrops: drops, minMean: Math.min(...means), maxMean: peak,
-    sectors: Array.from({length:TOTAL_SECTORS},(_,i)=>({sector:i+1,minMean:Math.min(...means.slice(i*60,i*60+60)),maxMean:Math.max(...means.slice(i*60,i*60+60))})),
+    sectors: Array.from({length:SECTOR_VISUALS.length},(_,i)=>({sector:i+1,minMean:Math.min(...means.slice(i*60,i*60+60)),maxMean:Math.max(...means.slice(i*60,i*60+60))})),
     minPeak: Math.min(...maxima), glErrors: errors, firstFrames: means.slice(0, 12),
     blurPixels:{centerDelta,edgeDelta},
     weapons:{frames:weaponMeans.length,minMean:Number(Math.min(...weaponMeans).toFixed(2)),glErrors:weaponErrors,
-      kills:game.run.kills,beamRemaining:game.weapons.remaining},
+      kills:weaponKills,beamRemaining:game.weapons.remaining},
+    encounters:{frames:encounterMeans.length,minMean:Number(Math.min(...encounterMeans).toFixed(2)),glErrors:encounterErrors},
   }, null, 2);
+  result.dataset.complete='true';
   buttons.forEach(button => button.disabled = false);
 }
 

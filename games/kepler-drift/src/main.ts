@@ -8,9 +8,13 @@ import { SECTORS, TOTAL_SECTORS, UPGRADES, buyUpgrade, upgradeCost, rollUpgrades
 import type { UpgradeId } from './state';
 import { cutterRecharge } from './weapons';
 import type { WeaponId } from './weapons';
-import { sectorHazards } from './hazards';
+import { flightHint } from './hazards';
+import { worldSector, visualSector } from './expedition';
+import type { RunMode } from './expedition';
 
-let best = 0;
+let best = 0, endlessBest = 0;
+let selectedMode: RunMode = 'expedition';
+try { const saved=Number(localStorage.getItem('kepler-endless-best-v1')); if(Number.isFinite(saved)&&saved>=0) endlessBest=saved; } catch { /* Optional record. */ }
 try { const saved = Number(localStorage.getItem('kepler-best-v2')); if (Number.isFinite(saved) && saved >= 0) best = saved; } catch { /* A private browser can disable local storage. */ }
 
 mountApp();
@@ -33,16 +37,16 @@ function showOverlay(html: string, label: string): void {
   requestAnimationFrame(() => overlay.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus());
 }
 function phase(g: Game): void {
-  root.dataset.phase = g.run.phase;
+  root.dataset.phase = g.run.phase; root.dataset.mode=g.run.mode;
   $('intro').hidden = g.run.phase !== 'ready';
   $('pause-button').hidden = ['ready','ended','upgrade','armory'].includes(g.run.phase);
   $('armory-button').hidden = !['flying','paused'].includes(g.run.phase);
   $('weapon-button').hidden = !['flying','paused'].includes(g.run.phase);
   if(g.run.phase==='flying' && g.run.elapsed===0) { resetWeaponHint(); armoryFeedback=''; }
-  setText('sector-number', `СЕКТОР ${pad(g.run.sector)}`); setText('sector-name', SECTORS[g.run.sector - 1]);
-  setText('sector-hint', sectorHazards(g.run.sector).hint);
-  setText('sector-state', g.run.phase === 'ready' ? 'ОЖИДАНИЕ СТАРТА' : ['paused','armory'].includes(g.run.phase) ? 'ПАУЗА' : 'В ПОЛЁТЕ');
-  $('route-stops').querySelectorAll('span').forEach((e, i) => { e.classList.toggle('current', i + 1 === g.run.sector); e.classList.toggle('complete', i + 1 < g.run.sector); });
+  setText('sector-number', `СЕКТОР ${pad(g.run.sector)}`); setText('sector-name', visualSector(g.run.sector,g.run.mode)===7?'ИЗУМРУДНЫЙ ДРЕЙФ':SECTORS[worldSector(g.run.sector) - 1]);
+  setText('sector-hint', flightHint(g.run.sector,g.run.mode));
+  setText('sector-state', g.run.phase === 'ready' ? 'ОЖИДАНИЕ СТАРТА' : ['paused','armory'].includes(g.run.phase) ? 'ПАУЗА' : g.run.phase==='upgrade'?'МАСТЕРСКАЯ':g.run.phase==='ended'?'ПОЛЁТ ЗАВЕРШЁН':'В ПОЛЁТЕ');
+  $('route-stops').querySelectorAll('span').forEach((e, i) => { e.classList.toggle('current', i + 1 === worldSector(g.run.sector)); e.classList.toggle('complete', i + 1 < worldSector(g.run.sector)); });
   if (g.run.phase === 'paused' && !helpOpen) {
     showOverlay(`<section class="pause-panel"><div class="panel-symbol">${icon('pause')}</div><h1>Держим позицию.</h1><p>Космос подождёт.<br/>Экспедиция продолжится с этого места.</p><button id="resume-button" class="primary-button">Продолжить полёт ${icon('play')}</button><button id="restart-button" class="secondary-button">Начать заново ${icon('rotate-ccw')}</button><button id="pause-help" class="text-button">Управление</button></section>`, 'Пауза');
     $('resume-button').onclick = () => g.resume(); $('restart-button').onclick = () => g.start(); $('pause-help').onclick = showHelp;
@@ -58,13 +62,14 @@ function renderShop(): void {
   showOverlay(`<section class="shop-panel"><div class="shop-heading"><div><h1>Сектор пройден.</h1><p>Превратите добычу в преимущество перед следующим прыжком.</p></div><div class="shop-balance">${icon('gem')}<strong>${r.ore}</strong><span>ДОСТУПНО РУДЫ</span></div></div><div class="upgrade-grid">${offer.map(id => {
     const u = UPGRADES[id], cost = upgradeCost(r, id), installed = purchased.has(id), full = id === 'repair' && r.hull === r.maxHull && r.shield === r.maxShield, disabled = installed || full || r.ore < cost;
     return `<article class="upgrade-card ${u.color} ${installed ? 'installed' : ''}"><div class="module-visual">${icon(installed ? 'check' : u.icon)}<span class="module-orbit"></span><span class="module-orbit second"></span></div><h2>${u.name}</h2><div class="module-level">${installed ? 'МОДУЛЬ УСТАНОВЛЕН' : id === 'repair' ? `КОРПУС ${Math.ceil(r.hull)} / 100` : `УРОВЕНЬ ${r.levels[id]} → ${r.levels[id] + 1}`}</div><p>${u.description}</p><button class="upgrade-buy" data-upgrade="${id}" ${disabled ? 'disabled' : ''}>${installed ? `${icon('check')} Установлено` : full ? 'Ремонт не требуется' : r.ore < cost ? `Нужно ещё ${cost - r.ore} руды` : `Установить <span>${icon('gem')} ${cost}</span>`}</button></article>`;
-  }).join('')}</div><div class="shop-footer"><p>${icon('shield')} Щит восстановится при переходе.<br/><span>Руда сохраняется до конца экспедиции.</span></p><button id="next-sector" class="primary-button">В сектор ${r.sector + 1} ${icon('arrow-right')}</button></div></section>`, 'Мастерская корабля');
+  }).join('')}</div><div class="shop-footer"><p>${icon('shield')} Щит восстановится при переходе.<br/><span>Руда сохраняется до конца экспедиции.</span></p>${r.mode==='endless'?'<button id="extract-button" class="secondary-button">Эвакуироваться с добычей</button>':''}<button id="next-sector" class="primary-button">В сектор ${r.sector + 1} ${icon('arrow-right')}</button></div></section>`, 'Мастерская корабля');
   overlay.querySelectorAll<HTMLButtonElement>('[data-upgrade]').forEach(button => button.onclick = () => {
     const id = button.dataset.upgrade as UpgradeId;
     if (purchased.has(id) || !buyUpgrade(game.run, id)) return;
     purchased.add(id); game.audio.upgrade(); renderShop(); update(game);
   });
   $('next-sector').onclick = () => game.nextSector();
+  if (r.mode==='endless') $('extract-button').onclick=()=>game.extract();
 }
 
 function renderArmory(): void {
@@ -100,10 +105,11 @@ function renderArmory(): void {
 }
 
 function showEnd(): void {
-  const r = game.run; const newBest = r.mined > best;
-  if (newBest) { best = r.mined; try { localStorage.setItem('kepler-best-v2', String(best)); } catch { /* Gameplay works without persistence. */ } }
-  showOverlay(`<section class="end-panel"><div class="panel-symbol ${r.won ? 'success' : ''}">${icon(r.won ? 'orbit' : 'shield')}</div><h1>${r.won ? 'За поясом — звёзды.' : 'Сигнал потерян.'}</h1><p>${r.won ? `Все ${TOTAL_SECTORS} секторов позади. Груз доставлен, корабль уцелел.` : 'Корабль остался среди астероидов.<br/>Следующий полёт будет другим.'}</p><dl class="run-results"><div><dt>ДОБЫТО РУДЫ</dt><dd class="gold-text">${r.mined}</dd></div><div><dt>АСТЕРОИДОВ</dt><dd>${r.kills}</dd></div><div><dt>ВРЕМЯ ПОЛЁТА</dt><dd>${time(r.elapsed)}</dd></div></dl><div class="result-note">${newBest ? 'Новый рекорд экспедиции' : `Рекорд: ${best} руды`}<span>Сектор ${r.sector} / ${TOTAL_SECTORS}</span></div><button id="new-run" class="primary-button">Новая экспедиция ${icon('arrow-up-right')}</button></section>`, 'Результаты экспедиции');
+  const r = game.run; const oldBest=r.mode==='endless'?endlessBest:best; const newBest = r.mined > oldBest;
+  if (newBest) { if(r.mode==='endless') endlessBest=r.mined; else best=r.mined; try { localStorage.setItem(r.mode==='endless'?'kepler-endless-best-v1':'kepler-best-v2',String(r.mined)); } catch { /* Gameplay works without persistence. */ } }
+  showOverlay(`<section class="end-panel"><div class="panel-symbol ${r.won ? 'success' : ''}">${icon(r.won ? 'orbit' : 'shield')}</div><h1>${r.won ? r.mode==='endless'?'Груз доставлен.':'За поясом — звёзды.' : 'Сигнал потерян.'}</h1><p>${r.won ? r.mode==='endless'?`Эвакуация из сектора ${r.sector}. Корабль и добыча вернулись домой.`:`Все ${TOTAL_SECTORS} секторов позади. Добывающие корабли повержены.` : 'Корабль остался среди астероидов.<br/>Следующий полёт будет другим.'}</p><dl class="run-results"><div><dt>ДОБЫТО РУДЫ</dt><dd class="gold-text">${r.mined}</dd></div><div><dt>АСТЕРОИДОВ</dt><dd>${r.kills}</dd></div><div><dt>ПИРАТОВ</dt><dd>${r.pirateKills}</dd></div><div><dt>БОССОВ</dt><dd>${r.bossKills}</dd></div><div><dt>ВРЕМЯ ПОЛЁТА</dt><dd>${time(r.elapsed)}</dd></div></dl><div class="result-note">${newBest ? 'Новый рекорд экспедиции' : `Рекорд: ${r.mode==='endless'?endlessBest:best} руды`}<span>Сектор ${r.sector}${r.mode==='endless'?'':` / ${TOTAL_SECTORS}`}</span></div><button id="new-run" class="primary-button">Новая экспедиция ${icon('arrow-up-right')}</button><button id="choose-mode" class="text-button end-mode-button">К выбору режима</button></section>`, 'Результаты экспедиции');
   $('new-run').onclick = () => game.start();
+  $('choose-mode').onclick=()=>{game.returnToMenu();selectMode(game.run.mode);$('toast').classList.remove('visible');$('launch-button').focus();};
 }
 
 function showHelp(): void {
@@ -112,7 +118,7 @@ function showHelp(): void {
   showOverlay(`<section class="help-panel">
     <button id="close-help" class="icon-button close-button" aria-label="Закрыть управление">${icon('x')}</button>
     <h1>Ваш первый полёт.</h1>
-    <p>Шесть секторов, три вида оружия. Разбивайте золотые астероиды и тратьте руду на улучшения. Красные камни взрываются от любого попадания: рядом с кораблём лучше уклониться. Синие бронекамни прочнее обычных — прорезайте их лучом.</p>
+    <p>Экспедиция из шести секторов или бесконечный «Глубокий дрейф», три вида оружия. Разбивайте золотые астероиды и тратьте руду на улучшения. Красные камни взрываются от любого попадания: рядом с кораблём лучше уклониться. Синие бронекамни прочнее обычных — прорезайте их лучом. Пираты стреляют очередями, снайпер заранее обозначает линию: уходите в сторону или прячьтесь за камнем. Красные астероиды могут уничтожить и врагов.</p>
     <dl class="control-list">
       <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>или стрелки</span></dt><dd>Маневрировать</dd></div>
       <div><dt>${icon('mouse')}<span>Мышь</span></dt><dd>Наводить прицел</dd></div>
@@ -124,7 +130,7 @@ function showHelp(): void {
       <div><dt><kbd>Q</kbd></dt><dd>Автоогонь · включён при старте</dd></div>
       <div><dt><kbd>ESC</kbd><span>/</span><kbd>M</kbd></dt><dd>Пауза / звук</dd></div>
     </dl>
-    <p class="help-footnote">Резак проходит сквозь любые астероиды в прицеле: 1,8 секунды работы, 12 секунд перезарядки. С автоогнём луч включается, когда в прицеле есть цель. Плазма взрывается в радиусе 7 м и может задеть красный камень. На телефоне переключайте оружие кнопками над джойстиком. Щит восстанавливается через 5 секунд без урона; магнит собирает руду автоматически.</p>
+    <p class="help-footnote">Резак проходит сквозь любые астероиды в прицеле: 1,8 секунды работы, 12 секунд перезарядки. С автоогнём луч включается, когда в прицеле есть цель. Плазма взрывается в радиусе 7 м и может задеть красный камень. У добывающего корабля стреляйте в реактор, когда заслонки открыты. В глубоком дрейфе можно эвакуироваться с добычей из мастерской после любого сектора. На телефоне переключайте оружие кнопками над джойстиком. Щит восстанавливается через 5 секунд без урона; магнит собирает руду автоматически.</p>
     <button id="help-done" class="primary-button">Всё понятно ${icon('arrow-right')}</button>
   </section>`, 'Управление');
   const close = () => { helpOpen = false; if (resumeAfterHelp) game.resume(); else if (game.run.phase === 'upgrade') renderShop(); else if(game.run.phase==='armory') renderArmory(); else phase(game); };
@@ -133,12 +139,21 @@ function showHelp(): void {
 
 async function fullscreen(): Promise<void> { try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen(); else await document.exitFullscreen(); } catch { toast('Полноэкранный режим недоступен в этом браузере.'); } }
 
+function selectMode(mode:RunMode):void {
+  selectedMode=mode; game.run.mode=mode; root.dataset.mode=mode;
+  for (const candidate of ['expedition','endless']) { const button=$('mode-'+candidate); button.classList.toggle('selected',candidate===mode); button.setAttribute('aria-pressed',String(candidate===mode)); }
+  $('mode-details').textContent=mode==='endless'?'БЕСКОНЕЧНАЯ ЭКСПЕДИЦИЯ':`${TOTAL_SECTORS} СЕКТОРОВ`;
+  $('launch-button').innerHTML=`${mode==='endless'?'Начать глубокий дрейф':'Начать экспедицию'} ${icon('arrow-up-right')}`;
+  const record=mode==='endless'?endlessBest:best; $('best-start').textContent=record>0?`Рекорд ${mode==='endless'?'дрейфа':'экспедиции'} · ${record} руды`:''; icons();
+}
+
 function bindUI(): void {
   window.addEventListener('keydown', e => {
     if (helpOpen && e.code==='KeyU') { e.preventDefault(); e.stopImmediatePropagation(); return; }
     if (helpOpen && ['Escape', 'KeyH', 'KeyP'].includes(e.code)) { e.preventDefault(); e.stopImmediatePropagation(); $('close-help')?.click(); }
   }, true);
-  $('launch-button').onclick = () => game.start(); $('intro-help').onclick = showHelp; $('help-button').onclick = showHelp;
+  $('launch-button').onclick = () => game.start(selectedMode);
+  for (const mode of ['expedition','endless'] as const) $('mode-'+mode).onclick=()=>selectMode(mode); $('intro-help').onclick = showHelp; $('help-button').onclick = showHelp;
   $('sound-button').onclick = () => sound(game.audio.toggle()); $('fullscreen-button').onclick = fullscreen; $('pause-button').onclick = () => game.togglePause();
   $('armory-button').onclick = () => game.openArmory();
   document.querySelectorAll<HTMLButtonElement>('[data-weapon-id]').forEach(button => button.onclick = () => {

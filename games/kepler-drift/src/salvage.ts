@@ -27,7 +27,12 @@ export class Salvage {
   get count(): number { return this.ores.length; }
 
   drop(position: T.Vector3, radius: number, rich: boolean): void {
-    const reward = asteroidOre(radius, rich);
+    this.dropReward(position, asteroidOre(radius, rich), radius);
+  }
+
+  dropReward(position: T.Vector3, reward: number, radius = 3): void {
+    reward = Math.max(0, Math.floor(reward));
+    if (!reward) return;
     const values = splitOre(reward, Math.min(5, Math.ceil(radius), MAX_CRYSTALS - this.ores.length));
     // A full pool merges the reward into the nearest cluster without losing ore.
     if (!values.length && this.ores.length) {

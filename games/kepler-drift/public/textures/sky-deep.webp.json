@@ -1,0 +1,19 @@
+{
+  "generator": "Built-in image_gen",
+  "prompt": "Use case: stylized-concept. Asset type: original deep-space sky-sphere texture for Kepler Drift, a cinematic 3D browser space game. Generate exactly one full-frame 2:1 equirectangular space panorama, requested size 2048x1024 pixels. The image contains only distant cosmic background: a rich emerald, jade and teal nebula, elegant softly illuminated folds and delicate filaments; restrained warm golden dust arcs sweep through the left outer third. One single beautiful very distant spiral galaxy with a tiny warm cream nucleus and fine muted blue-gold arms lies in the upper right outer third, modest in size so it reads as distant background. Colorful nebular structure is concentrated in the two outer thirds and near the panorama's upper and lower edges. Preserve the middle third, especially the central aiming area, as spacious calm deep navy-teal darkness, subtle wisps only, no bright central feature. Saturated but readable jade mids and restrained gold, fine astrophotographic detail, atmospheric scale, quiet elegant deep-space mood. Small sparse sharp stars of varied low brightness; no dense bright star noise, no large lens flares or overexposed highlights. Strictly a flat continuous equirectangular panorama for wrapping on a very distant sphere: horizontal left/right boundaries should match seamlessly in tone and flow, gently compressed polar regions, complete textured rectangle with no border. No planets, no moons, no rings, no sun, no asteroid foreground, no ships, no stations, no HUD, no icons, no writing, no watermarks. No sphere outline or visible sky dome. This is a sky texture alone, not an illustrated gameplay screenshot.",
+  "createdAt": "2026-10-02",
+  "conversion": "PNG to WebP quality 90; original content and dimensions preserved",
+  "usage": "2:1 equirectangular panorama for the emerald deep-drift sky sphere",
+  "dimensions": {
+    "width": 1774,
+    "height": 887
+  },
+  "requestedDimensions": {
+    "width": 2048,
+    "height": 1024
+  },
+  "dimensionNote": "The built-in tool returned 1774x887; the exact 2:1 output was preserved without resizing.",
+  "bytes": 267404,
+  "sha256": "5ade41847b8a88e1935e954055b016e4bcd194624bcb93f6971454b8e4c78885",
+  "sourceSha256": "d3e6fc64e5ec6bcbcc44c9ea064923e382696824b407010c951d9e74d138a6bc"
+}

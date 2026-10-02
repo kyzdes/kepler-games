@@ -106,15 +106,21 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
     return mesh.material.map?.name;
   });
   fresh();
+  // This clock/map scenario isolates progression. Combat has its own encounter
+  // probe; real boss hit() still resolves the required victory gate here.
+  sim.invulnerable=10000;
   const journey=[];
   for(let sector=1;sector<=TOTAL_SECTORS;sector++) {
     clearRocks(); const visual=sectorVisual(sector);
     const correctMaps=maps().join(',')===[visual.planet,visual.sky].join(',');
-    step(SECTOR_SECONDS*60+1);
+    for(let frame=0;frame<SECTOR_SECONDS*60+1 && game.run.phase==='flying';frame++) {
+      step();
+      if(game.boss.target) game.boss.hit(game.boss.target,game.boss.target.hp);
+    }
     journey.push({sector,seconds:game.run.sectorTime,phase:game.run.phase,correctMaps});
     if(sector<TOTAL_SECTORS) game.nextSector();
   }
-  record('Шесть секторов длятся по 75 секунд и заканчиваются победой', journey.every((j,i)=>Math.abs(j.seconds-75)<.02 && j.phase===(i<TOTAL_SECTORS-1?'upgrade':'ended')) && Math.abs(game.run.elapsed-SECTOR_SECONDS*TOTAL_SECTORS)<.12 && game.run.won, journey);
+  record('Синтетический маршрут: после победы над боссами шесть секторов завершаются за 75 секунд каждый', journey.every((j,i)=>Math.abs(j.seconds-75)<.02 && j.phase===(i<TOTAL_SECTORS-1?'upgrade':'ended')) && Math.abs(game.run.elapsed-SECTOR_SECONDS*TOTAL_SECTORS)<.12 && game.run.won, journey);
   record('Переходы реально меняют текстуры планеты и галактики', journey.every(j=>j.correctMaps));
   game.start();
   record('Новый забег возвращает текстуры первого сектора', maps().join(',')===[sectorVisual(1).planet,sectorVisual(1).sky].join(','));

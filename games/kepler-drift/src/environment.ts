@@ -1,8 +1,8 @@
 import * as T from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { mulberry32, TOTAL_SECTORS } from './state';
+import { mulberry32 } from './state';
 import { PlanetStorm } from './storm';
-import { sectorVisual } from './sectors';
+import { sectorVisual, SECTOR_VISUALS } from './sectors';
 import { QuietSkyShader } from './quiet-sky';
 
 export interface SpaceEnvironment { root: T.Group; update(dt: number): void; setSector(sector: number): void; }
@@ -30,7 +30,7 @@ export function createEnvironment(scene: T.Scene, renderer: T.WebGLRenderer, tex
   const starField = new T.Points(sg,new T.PointsMaterial({size:1.65,sizeAttenuation:true,vertexColors:true,transparent:true,opacity:.6,fog:false}));
   cosmos.add(starField);
   const first = sectorVisual(1), ice = textures.get(first.planet)!;
-  for (let sector = 1; sector <= TOTAL_SECTORS; sector++) {
+  for (let sector = 1; sector <= SECTOR_VISUALS.length; sector++) {
     const url=sectorVisual(sector).sky;
     if(!url) continue;
     const panorama = textures.get(url)!;
