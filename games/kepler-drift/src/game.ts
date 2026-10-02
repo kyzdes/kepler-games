@@ -13,7 +13,7 @@ import { Projectiles } from './projectiles';
 import { CuttingBeam } from './cutting-beam';
 import { WeaponBattery, WEAPONS, cutterRecharge, PLASMA_RADIUS, CUTTER_RANGE } from './weapons';
 import type { WeaponId } from './weapons';
-import { asteroidKind, blastDamage, blastRadius, sectorHazards } from './hazards';
+import { asteroidKind, blastDamage, blastRadius, flightHint } from './hazards';
 import { AsteroidVisuals } from './asteroid-visuals';
 import { Salvage } from './salvage';
 import { FlightEffects } from './flight-effects';
@@ -29,6 +29,13 @@ import { paintLoadingFrame } from './loading';
 import type { LoadingProgress } from './loading';
 import { createRun, clamp, damageShip, collectOre, mulberry32, flightSpeed, SECTOR_SECONDS, TOTAL_SECTORS } from './state';
 import type { Run } from './state';
+import type { RunMode } from './expedition';
+import { visualSector, shouldSpawnBoss, canAdvanceSector, isExpeditionComplete, canExtract, cappedForwardSpeed, nextSector as nextExpeditionSector } from './expedition';
+import { PirateFleet } from './pirates';
+import type { Pirate } from './pirates';
+import { MiningBoss, BOSS_CUTTER_DPS } from './mining-boss';
+import type { CombatTarget } from './combat';
+import { createExpeditionProps } from './expedition-props';
 
 export interface GameHooks { update(game: Game): void; phase(game: Game): void; toast(text: string): void; help(): void; sound(muted: boolean): void; }
 
@@ -43,6 +50,11 @@ export class Game {
   readonly ship = createShip();
   readonly audio = new GameAudio();
   readonly rocks: Rock[] = [];
+  readonly pirates: PirateFleet;
+  readonly boss: MiningBoss;
+  private readonly expeditionProps = createExpeditionProps();
+  private readonly combatBuffer: CombatTarget[] = [];
+  combatTarget: CombatTarget | null = null;
   readonly pointer = new T.Vector2(0, 0);
   readonly touchMove = new T.Vector2();
   readonly velocity = new T.Vector2();
@@ -85,7 +97,7 @@ export class Game {
   private readonly cameraRig = new StableFlightCamera();
   private flightY = 0;
   autoFire = true;
-  get forwardSpeed(): number { return flightSpeed(this.run.sector, this.run.sectorTime) * (this.boostTime > 0 ? BOOST_FORWARD_MULTIPLIER : 1); }
+  get forwardSpeed(): number { return (this.run.mode==='endless'?cappedForwardSpeed(this.run.sector,this.run.sectorTime):flightSpeed(this.run.sector, this.run.sectorTime)) * (this.boostTime > 0 ? BOOST_FORWARD_MULTIPLIER : 1); }
   target: Rock | null = null;
   loaded = false;
   fps = 60;
@@ -114,6 +126,23 @@ export class Game {
     this.camera.position.set(0, 4, 18.2);
     this.camera.lookAt(0, 1.5, -35);
     this.effects = new FlightEffects(this.scene, () => this.rng());
+    this.pirates = new PirateFleet(this.scene, () => this.rng(), {
+      hitPlayer: (amount, reason) => { if (this.invulnerable<=0 && this.run.hull>0) this.hurtShip(amount,reason); },
+      destroyed: enemy => this.destroyPirate(enemy),
+      shot: () => this.audio.tone(150,70,.09,.025,'sawtooth'),
+    }, this.reducedMotion);
+    this.boss = new MiningBoss(this.scene, {
+      hitPlayer: (amount, reason) => { if (this.invulnerable<=0 && this.run.hull>0) this.hurtShip(amount,reason); },
+      destroyed: position => {
+        this.run.bossKills++; this.effects.shockwave(position,23,0xffbd65);
+        this.effects.burst(position,new T.Color(2.5,.9,.2),90,16);
+        this.salvage.dropReward(position,100,6); this.audio.rock(6,0,50);
+        this.hooks.toast('Реактор разрушен · путь свободен · 100 руды в обломках');
+      },
+      shot: () => this.audio.tone(90,45,.16,.06,'triangle'),
+    }, this.reducedMotion);
+    this.expeditionProps.root.visible=false;
+    this.scene.add(this.expeditionProps.root);
     this.bindControls();
     this.resize();
     this.cameraRig.reset(this.camera);
@@ -204,13 +233,15 @@ export class Game {
     if (initial && i === 4) rock.root.position.set(17, -5, -16);
     rock.root.rotation.set(this.rng() * 6, this.rng() * 6, this.rng() * 6);
     rock.kind = asteroidKind(this.run.sector, this.rng());
-    rock.maxHp = (12 + rock.radius * 8) * (1 + (this.run.sector - 1) * .28) * (rock.kind === 'armored' ? 2.4 : 1);
+    if (this.boss?.active && Math.abs(rock.root.position.x)<7) rock.root.position.x=(this.rng()<.5?-1:1)*(9+this.rng()*12);
+    rock.maxHp = (12 + rock.radius * 8) * (1 + (Math.min(this.run.sector,12) - 1) * .28) * (rock.kind === 'armored' ? 2.4 : 1);
     this.asteroidVisuals?.apply(rock);
     rock.wait = 0; rock.hp = rock.maxHp; rock.root.visible = true;
+    (rock.previousPosition ??= new T.Vector3()).copy(rock.root.position);
   }
 
-  start(): void {
-    this.run = createRun(); this.run.phase = 'flying';
+  start(mode: RunMode = this.run.mode): void {
+    this.run = createRun(mode); this.run.phase = 'flying';
     this.autoFire = true; this.roll.reset(); this.bankAngle = 0;
     this.flightY = 0;
     this.cosmos?.setSector(1);
@@ -222,10 +253,23 @@ export class Game {
     this.flightClock = this.invulnerable = 0; this.lastDamage = -20; this.flash = 0;
     this.weapons.reset(); this.beam.hide(); this.audio.setCutting(false);
     this.projectiles.reset(); this.salvage.reset(); this.effects.reset();
+    this.pirates.reset(); this.boss.reset(); this.combatTarget=null;
+    this.expeditionProps.root.visible=mode==='endless';
     this.rocks.forEach((rock, i) => this.placeRock(rock, true, i));
     this.audio.start(); this.audio.setFlying(true);
     this.hooks.phase(this); this.hooks.toast('Держите курс. Золотые жилы содержат руду.');
     this.renderer.domElement.focus({ preventScroll: true });
+  }
+
+  extract(): boolean {
+    if (!canExtract(this.run.mode,this.run.phase,this.run.sector)) return false;
+    this.salvage.collectAll(value=>collectOre(this.run,value));
+    this.finish(true); return true;
+  }
+
+  returnToMenu(): void {
+    this.start();
+    this.run.phase='ready';this.audio.setFlying(false);this.hooks.phase(this);
   }
 
   pause(): void {
@@ -267,12 +311,13 @@ export class Game {
   }
   nextSector(): void {
     if (this.run.phase !== 'upgrade') return;
-    this.run.sector++; this.run.sectorTime = 0; this.run.phase = 'flying';
-    this.cosmos?.setSector(this.run.sector);
+    this.run.sector=nextExpeditionSector(this.run.sector); this.run.sectorTime = 0; this.run.phase = 'flying';
+    this.pirates.reset(); this.boss.reset(); this.combatTarget=null;
+    this.cosmos?.setSector(visualSector(this.run.sector,this.run.mode));
     this.run.shield = this.run.maxShield;
-    this.rocks.forEach(r => { if (r.root.position.z > -45) this.placeRock(r); });
+    this.rocks.forEach(r => this.placeRock(r));
     this.projectiles.reset(); this.weapons.stopCutting(); this.beam.hide(); this.audio.setCutting(false);
-    this.keys.clear(); this.fireInput.clear(); this.audio.setFlying(true); this.hooks.phase(this); this.hooks.toast(`Сектор ${this.run.sector} · ${sectorHazards(this.run.sector).hint}`);
+    this.keys.clear(); this.fireInput.clear(); this.audio.setFlying(true); this.hooks.phase(this); this.hooks.toast(`Сектор ${this.run.sector} · ${flightHint(this.run.sector,this.run.mode)}`);
   }
 
   private bindControls(): void {
@@ -331,6 +376,12 @@ export class Game {
     const blur=this.run.phase==='flying' && !this.reducedMotion ? boostEnvelope(this.boostTime) : 0;
     this.boostBlurPass.uniforms.strength.value=blur; this.boostBlurPass.enabled=blur>.001;
     for (const flame of this.ship.flames) flame.scale.y = (this.boostTime > 0 ? 1.8 : 1) * (.96 + Math.sin(this.frameClock * 30) * .065);
+    if (this.expeditionProps.root.visible) {
+      this.expeditionProps.drones.forEach((drone,i)=>{
+        drone.position.set(this.ship.root.position.x+(i===0?-3.4:3.4),this.flightY+.5+(this.reducedMotion?0:Math.sin(this.flightClock*1.5+i)*.18),-1.8);
+      });
+      this.expeditionProps.beacon.visible=this.run.sectorTime>=60 || this.run.phase==='upgrade';
+    }
     if (!document.hidden && (this.run.phase === 'ready' || this.run.phase === 'flying')) this.cosmos?.update(dt);
     this.flash = Math.max(0, this.flash - dt * 3.5);
     this.uiClock += dt;
@@ -366,21 +417,47 @@ export class Game {
     for (const rock of this.rocks) {
       if (rock.wait > 0) { rock.wait -= dt; if (rock.wait <= 0) this.placeRock(rock); continue; }
       this.startPoint.copy(rock.root.position);
+      (rock.previousPosition ??= new T.Vector3()).copy(rock.root.position);
       rock.root.position.z += worldSpeed * dt;
-      rock.root.position.x += Math.sin(this.flightClock * .28 + rock.radius) * dt * (this.run.sector - 1) * .55;
+      rock.root.position.x += Math.sin(this.flightClock * .28 + rock.radius) * dt * (Math.min(this.run.sector,6) - 1) * .55;
       rock.root.rotation.x += rock.spin.x * dt; rock.root.rotation.y += rock.spin.y * dt;
       if (rock.root.position.z > 26) { this.placeRock(rock); continue; }
       if (this.invulnerable <= 0 && this.shipCollider.intersectsRock(this.startPoint, rock.root.position, rock.radius * .93)) {
         this.hurtShip((rock.kind === 'volatile' ? 42 : rock.kind === 'armored' ? 34 : 22) + rock.radius * 3,
           rock.kind === 'volatile' ? 'Взрывной астероид' : 'Столкновение');
-        if (rock.kind === 'volatile') this.effects.shockwave(rock.root.position, blastRadius(rock.radius), 0xff4f27);
+        if (rock.kind === 'volatile') {
+          const radius=blastRadius(rock.radius);
+          this.effects.shockwave(rock.root.position,radius,0xff4f27);
+          this.pirates.blast(rock.root.position,radius,100);
+          this.boss.blast(rock.root.position,radius,100);
+        }
         this.effects.burst(rock.root.position, new T.Color(1, .36, .08), 28, 8); this.hideRock(rock);
         if (this.run.hull <= 0) { this.finish(false); return; }
       }
     }
+    if (shouldSpawnBoss(this.run.sector,this.run.sectorTime,this.run.mode) && !this.boss.active && !this.boss.defeated) {
+      this.boss.spawn(this.run.sector);
+      for (const rock of this.rocks) if (rock.wait<=0 && Math.abs(rock.root.position.x)<7 && rock.root.position.z<-12) {
+        rock.root.position.x=rock.root.position.x<0?-12:12;
+        rock.previousPosition?.copy(rock.root.position);
+      }
+      this.hooks.toast('Добывающий корабль · уходите с красной линии, бейте в открытый реактор');
+    }
+    const intersectsPlayer=(from:T.Vector3,to:T.Vector3,radius:number)=>this.shipCollider.intersectsRock(from,to,radius);
+    this.boss.update(dt,{player:pos,rocks:this.rocks,worldSpeed,intersectsPlayer});
+    this.pirates.update(dt,{sector:this.run.sector,sectorTime:this.run.sectorTime,elapsed:this.run.elapsed,player:pos,worldSpeed,rocks:this.rocks,bossActive:this.boss.active,intersectsPlayer});
+    if (this.run.hull<=0) { this.finish(false); return; }
+    for (const enemy of this.pirates.enemies) {
+      if (!enemy.active || this.invulnerable>0) continue;
+      if (this.shipCollider.intersectsRock(enemy.previousPosition ?? enemy.position,enemy.position,enemy.radius)) {
+        this.hurtShip(32,'Столкновение с пиратом'); this.pirates.hit(enemy,enemy.hp);
+        if (this.run.hull<=0) { this.finish(false); return; }
+      }
+    }
     this.updateTarget();
     const attack = this.weapons.fire(this.run.fireInterval, this.shooting, this.autoFire,
-      !!this.target && this.target.root.position.distanceTo(this.ship.root.position) <= CUTTER_RANGE + this.target.radius);
+      (!!this.target && this.target.root.position.distanceTo(pos)<=CUTTER_RANGE+this.target.radius)
+      || (!!this.combatTarget && this.combatTarget.position.distanceTo(pos)<=CUTTER_RANGE+this.combatTarget.radius && (this.combatTarget.kind!=='reactor' || this.boss.reactorOpen)));
     if (attack) this.fire(attack);
     this.projectiles.update(dt, this.rocks, this.run.damage, (rock, position, kind) => {
       this.effects.burst(position, kind === 'plasma' ? new T.Color(.5, .7, 2.5) : new T.Color(1.8, .65, .15), 5, 4);
@@ -388,10 +465,11 @@ export class Game {
     }, position => {
       this.effects.shockwave(position, PLASMA_RADIUS, 0x977dff);
       this.effects.burst(position, new T.Color(.6, .4, 2.5), 24, 6);
-    }, () => this.run.hull > 0);
+    }, () => this.run.hull > 0, {targets:this.combatTargets(),hit:(target,damage,position)=>this.hitHostile(target,damage,position)});
     if (this.run.hull <= 0) { this.finish(false); return; }
     if (this.weapons.cutting) this.beam.update(this.ship.muzzles, this.nearestTarget(), this.rocks,
-      (rock, direction) => this.breakRock(rock, direction), () => this.run.hull > 0);
+      (rock, direction) => this.breakRock(rock, direction), () => this.run.hull > 0,
+      {targets:this.combatTargets(),hit:(target,damage,position)=>this.hitHostile(target,damage,position)}, BOSS_CUTTER_DPS*(this.run.damage/14)*dt);
     else this.beam.hide();
     if (this.run.hull <= 0) { this.finish(false); return; }
     this.salvage.update(dt, worldSpeed, this.ship.root.position, this.run.magnet, (value, position) => {
@@ -400,10 +478,10 @@ export class Game {
       this.effects.burst(position, new T.Color(1, .7, .24), 3, 1.5);
     });
     this.effects.update(dt);
-    if (this.run.sectorTime >= SECTOR_SECONDS) {
+    if (canAdvanceSector(this.run.sector,this.run.sectorTime,this.boss.defeated,this.run.mode)) {
       // A sector transfer finishes the tractor collection before the equipment bay opens.
       this.salvage.collectAll(value => collectOre(this.run, value));
-      if (this.run.sector === TOTAL_SECTORS) this.finish(true);
+      if (isExpeditionComplete(this.run.sector,this.run.sectorTime,this.boss.defeated,this.run.mode)) this.finish(true);
       else { this.run.phase = 'upgrade'; this.keys.clear(); this.fireInput.clear(); this.weapons.stopCutting(); this.beam.hide(); this.audio.setCutting(false); this.audio.setFlying(false); this.audio.upgrade(); this.hooks.phase(this); }
     }
   }
@@ -417,6 +495,11 @@ export class Game {
       this.raySphere.center.copy(rock.root.position); this.raySphere.radius = rock.radius * 1.02;
       const hit = this.ray.ray.intersectSphere(this.raySphere, this.tmp);
       if (hit) { const distance = hit.distanceToSquared(this.ray.ray.origin); if (distance < nearest) { nearest = distance; this.aimPoint.copy(hit); } }
+    }
+    for (const target of this.combatTargets()) {
+      this.raySphere.center.copy(target.position); this.raySphere.radius=target.radius;
+      const hit=this.ray.ray.intersectSphere(this.raySphere,this.tmp);
+      if (hit) { const distance=hit.distanceToSquared(this.ray.ray.origin); if(distance<nearest) {nearest=distance;this.aimPoint.copy(hit);} }
     }
     return this.aimPoint;
   }
@@ -446,6 +529,8 @@ export class Game {
     this.hideRock(rock);
     if (rock.kind === 'volatile') {
       this.effects.shockwave(rock.root.position, blastRadius(rock.radius), 0xff4f27);
+      this.pirates.blast(rock.root.position,blastRadius(rock.radius),100);
+      this.boss.blast(rock.root.position,blastRadius(rock.radius),100);
       const damage = blastDamage(rock.radius, distance);
       if (damage > 0 && this.invulnerable <= 0) this.hurtShip(damage, 'Взрыв рядом с кораблём');
     }
@@ -460,6 +545,7 @@ export class Game {
 
   private updateTarget(): void {
     this.target = null;
+    this.combatTarget = null;
     if (this.run.phase !== 'flying') return;
     this.ray.setFromCamera(this.pointer, this.camera); let nearest = Infinity;
     for (const r of this.rocks) {
@@ -469,8 +555,21 @@ export class Game {
         const distance = this.tmp.distanceToSquared(this.camera.position); if (distance < nearest) { nearest = distance; this.target = r; }
       }
     }
+    for (const target of this.combatTargets()) {
+      if (target.position.z>-5) continue;
+      this.raySphere.center.copy(target.position); this.raySphere.radius=target.radius*1.08;
+      if(this.ray.ray.intersectSphere(this.raySphere,this.tmp)) {
+        const distance=this.tmp.distanceToSquared(this.camera.position);
+        if(distance<nearest) {nearest=distance;this.target=null;this.combatTarget=target;}
+      }
+    }
   }
-  targetScreen(): { x: number; y: number; health: number; ore: boolean; kind: Rock['kind'] } | null {
+  targetScreen(): { x: number; y: number; health: number; ore: boolean; kind: Rock['kind'] | CombatTarget['kind']; label?: string } | null {
+    if (this.combatTarget?.active) {
+      const t=this.combatTarget;
+      this.tmp2.copy(t.position); this.tmp2.y+=t.radius+1.6; this.tmp2.project(this.camera);
+      return {x:(this.tmp2.x+1)/2*this.host.clientWidth,y:(1-this.tmp2.y)/2*this.host.clientHeight,health:t.hp/t.maxHp,ore:false,kind:t.kind,label:t.kind==='reactor'?(this.boss.reactorOpen?'РЕАКТОР ОТКРЫТ · РЕЗАК':'БРОНЯ ЗАКРЫТА'):t.label};
+    }
     if (!this.target) return null;
     this.tmp2.copy(this.target.root.position); this.tmp2.y += this.target.radius + 1.6; this.tmp2.project(this.camera);
     return { x: (this.tmp2.x + 1) / 2 * this.host.clientWidth, y: (1 - this.tmp2.y) / 2 * this.host.clientHeight, health: this.target.hp / this.target.maxHp, ore: this.target.ore, kind: this.target.kind };
@@ -481,6 +580,24 @@ export class Game {
   }
   get damageFlash(): number { return this.flash; }
   get oreCount(): number { return this.salvage.count; }
+  private combatTargets(): CombatTarget[] {
+    this.combatBuffer.length=0;
+    for (const enemy of this.pirates.targets) this.combatBuffer.push(enemy);
+    if (this.boss.bodyTarget) this.combatBuffer.push(this.boss.bodyTarget);
+    return this.combatBuffer;
+  }
+  private hitHostile(target:CombatTarget,damage:number,position:T.Vector3): void {
+    if (!target.active || this.run.hull<=0) return;
+    if (target.kind==='reactor') this.boss.hit(target,damage); else this.pirates.hit(target,damage);
+    this.effects.burst(position,new T.Color(1.6,.55,.15),damage<5?1:6,3);
+  }
+  private destroyPirate(enemy:Pirate): void {
+    this.run.pirateKills++;
+    this.effects.burst(enemy.position,new T.Color(2.4,.7,.12),32,8);
+    this.effects.shockwave(enemy.position,5,0xffa04a);
+    this.salvage.dropReward(enemy.position,enemy.kind==='sniper'?18:12,3);
+    this.audio.rock(3.2,(enemy.position.x-this.ship.root.position.x)/24,enemy.position.distanceTo(this.ship.root.position));
+  }
   private finish(won: boolean): void {
     this.run.phase = 'ended'; this.run.won = won; this.keys.clear(); this.touchMove.set(0, 0); this.fireInput.clear(); this.weapons.stopCutting(); this.beam.hide(); this.audio.setCutting(false); this.audio.setFlying(false); this.hooks.phase(this);
   }

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Кеплер — проверка новой экспедиции</title>
+  <style>
+    body { margin:0; background:#071019; color:#eef5f8; font:14px/1.5 monospace; }
+    #scene { position:fixed; inset:0; }
+    #panel { position:relative; margin:16px; padding:16px; max-width:850px; background:#071019ed; }
+    h1 { font-size:20px; margin-top:0; }
+    p { color:#acbdca; }
+    button { padding:10px 14px; font:inherit; cursor:pointer; margin:3px; }
+    button:disabled { cursor:wait; }
+    pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+    body.preview #panel { width:fit-content; max-width:calc(100vw - 64px); font-size:11px; }
+    body.preview h1, body.preview p, body.preview pre { display:none; }
+  </style>
+</head>
+<body>
+  <div id="scene"></div>
+  <section id="panel">
+    <h1>Проверка новой экспедиции</h1>
+    <p>Настоящий Game и игровые системы. Синтетические позиции, заданный seed и отдельные боевые ситуации проверяют интеграцию. Это не замер баланса и не телеметрия игрока.</p>
+    <button id="run" disabled>Проверить новую экспедицию</button>
+    <button id="preview" disabled>Показать бой</button>
+    <pre id="result" role="status">Подготовка игровой сцены…</pre>
+  </section>
+  <script type="module" src="/tests/encounter-probe.ts"></script>
+</body>
+</html>

@@ -63,3 +63,28 @@
 @media(max-width:520px){.equipment{width:calc(100% - 44px);bottom:47px;gap:8px}.equipment>.equipment-slot:not(.weapon-choice){display:none}.weapon-choice{flex:1;min-width:0}.equipment-name{font-size:10px}.weapon-choice .equipment-status{font-size:9px}.hazard-warning{left:22px;right:22px;top:192px;max-width:none;justify-content:center}.toast{top:32%}.target-info[data-kind="volatile"]{width:230px}}
 @media(pointer:coarse){.game-app[data-phase="flying"] .equipment{display:flex;bottom:calc(153px + var(--safe-bottom));width:min(360px,calc(100% - 44px));gap:8px}.equipment>.equipment-slot:not(.weapon-choice){display:none}.weapon-choice{flex:1;min-width:0;height:62px;padding:7px 4px}.weapon-choice>svg{width:21px;height:21px;margin-bottom:5px}.weapon-choice .equipment-key{display:none}.weapon-choice .equipment-name{font-size:10px;letter-spacing:.4px}.weapon-choice .equipment-status{font-size:9px;margin-top:3px}.game-app[data-phase="flying"] .ship-status{bottom:calc(237px + var(--safe-bottom))}.game-app[data-phase="flying"] .radar-wrap{bottom:calc(225px + var(--safe-bottom))}}
 @media(pointer:coarse) and (min-width:600px){.game-app[data-phase="flying"] .equipment{bottom:calc(32px + var(--safe-bottom));width:300px}.game-app[data-phase="flying"] .ship-status{bottom:145px}.game-app[data-phase="flying"] .radar-wrap{bottom:136px}}
+
+/* Expedition choices and hostile telemetry keep the flight corridor clear. */
+.run-modes{display:flex;gap:8px;margin:0 0 18px;width:100%}
+.run-mode{flex:1;min-width:0;min-height:76px;text-align:left;padding:11px 12px;background:rgba(3,12,21,.86);border:1px solid var(--line);border-radius:3px;color:#d4e5ef;font-size:12px;font-weight:500;line-height:1.3}
+.run-mode span{display:block;margin-top:6px;color:#b7cedc;font-size:10px;font-weight:400;line-height:1.45}
+.run-mode.selected{border-color:#e2ae71;background:#273025;color:#ffe0b3}
+.run-mode.selected span{color:#ead6b9}.run-mode:hover{border-color:var(--ice)}
+.intro-panel{top:24%;width:340px}.intro-panel .primary-button{width:100%}.intro-panel>p{margin-bottom:20px}.expedition-details{margin-bottom:14px}
+.encounter-info{font-size:9px;line-height:1.55;letter-spacing:.2px;color:#ffc8a7;margin-top:11px;max-width:220px}
+.boss-hud{position:absolute;left:50%;top:110px;transform:translateX(-50%);width:min(430px,42vw);padding:9px 13px;background:rgba(3,12,21,.9);border:1px solid rgba(221,166,112,.4)}
+.boss-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:10px;letter-spacing:1.5px;color:#f3d4b2}.boss-heading strong{font-weight:500}.boss-heading span{font-variant-numeric:tabular-nums;letter-spacing:0;color:#e1b38b}
+.boss-health{margin-top:8px;height:4px;background:#26303b}.boss-health i{display:block;height:100%;background:#e69a57;transform-origin:left}
+.boss-hud p{margin:7px 0 0;font-size:10px;line-height:1.5;color:#e5c4a6}.boss-hud.reactor-open{border-color:#75bdd1}.boss-hud.reactor-open p{color:#a9edff}.boss-hud.reactor-open .boss-health i{background:#93d8eb}
+.target-info[data-kind="fighter"],.target-info[data-kind="sniper"]{background:rgba(29,12,9,.91);width:210px}.target-info[data-kind="fighter"]>span,.target-info[data-kind="sniper"]>span{color:#ffd0ad}.target-info[data-kind="reactor"]{width:220px;background:rgba(5,26,34,.94)}.target-info[data-kind="reactor"]>span{color:#b6f1ff}
+.game-app[data-mode="endless"] .route-stops{display:none}.game-app[data-mode="endless"] .flight-time{margin-top:8px}.game-app[data-phase="ready"] .boss-hud,.game-app[data-phase="ready"] .encounter-info{display:none}
+.run-results{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px 18px}.run-results dd{font-size:28px}.end-panel{width:min(600px,100%)}
+.shop-footer .secondary-button{min-height:44px;white-space:normal;max-width:185px}.shop-footer p{flex:1}.shop-footer:has(#extract-button){flex-wrap:wrap}
+@media(max-width:900px){.boss-hud{top:95px;width:40vw}.boss-heading{font-size:9px;letter-spacing:.8px}.boss-hud p{font-size:9px}.intro-panel{width:290px;top:23%}.run-mode{padding:9px;font-size:11px}.run-mode span{font-size:9px}}
+@media(max-width:520px){.intro-panel{width:calc(100% - 56px);left:28px;top:24%!important;max-width:334px}.intro-panel h1{font-size:52px;margin-bottom:18px}.intro-panel>p{font-size:14px}.run-modes{margin-bottom:15px}.run-mode{min-height:76px;font-size:12px}.run-mode span{font-size:10px}.intro-panel .primary-button{min-height:48px;font-size:13px}.boss-hud{top:170px;width:calc(100% - 44px);padding:8px 10px}.boss-heading{font-size:10px}.boss-hud p{font-size:10px}.encounter-info{max-width:185px;font-size:9px}.game-app:has(.boss-hud:not([hidden])) .hazard-warning{top:248px}.shop-footer .secondary-button{width:100%;max-width:none}.run-results{gap:20px 14px}}
+@media(max-height:650px) and (min-width:600px){.intro-panel{top:22%;width:290px}.intro-panel h1{font-size:44px;margin-bottom:14px}.run-mode{min-height:61px;padding:8px;font-size:11px}.run-mode span{font-size:9px;margin-top:4px}.run-modes{margin-bottom:11px}.boss-hud{top:88px}}
+@media(max-height:480px) and (min-width:600px){.intro-panel{top:23%;width:320px}.intro-panel h1{font-size:35px}.intro-panel>p{margin-bottom:10px}.expedition-details{margin-bottom:8px}.run-mode{min-height:55px}.boss-hud{top:72px}}
+
+.end-mode-button { margin-top:12px; }
+.game-app[data-phase="flying"] .sector-info { isolation:isolate; }
+.game-app[data-phase="flying"] .sector-info::before { content:"";position:absolute;inset:-12px -14px;z-index:-1;background:rgba(3,12,21,.84);border-left:1px solid rgba(150,199,221,.32);pointer-events:none; }

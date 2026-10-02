@@ -2,6 +2,12 @@ import * as T from 'three';
 import type { Rock } from './asteroids.ts';
 import { segmentSphereHit } from './state.ts';
 import { PLASMA_RADIUS } from './weapons.ts';
+import type { CombatTarget } from './combat.ts';
+
+export interface CombatHits {
+  targets: readonly CombatTarget[];
+  hit(target: CombatTarget, damage: number, position: T.Vector3): void;
+}
 
 export type ProjectileKind = 'pulse' | 'plasma';
 interface ShotOptions { kind: ProjectileKind; damage: number; }
@@ -61,7 +67,8 @@ export class Projectiles {
 
   update(dt: number, rocks: readonly Rock[], damage: number,
     onHit: (rock: Rock, position: T.Vector3, kind: ProjectileKind) => void,
-    onBlast: (position: T.Vector3) => void = () => {}, alive: () => boolean = () => true): void {
+    onBlast: (position: T.Vector3) => void = () => {}, alive: () => boolean = () => true,
+    combat?: CombatHits): void {
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const shot = this.shots[i];
       if (!alive()) break;
@@ -69,21 +76,32 @@ export class Projectiles {
       this.start.copy(shot.mesh.position);
       this.end.copy(this.start).addScaledVector(shot.velocity, dt);
       let hit: Rock | null = null, nearest = 2;
+      let hostile: CombatTarget | null = null;
       for (const rock of rocks) {
         if (rock.wait > 0) continue;
-        const p = rock.root.position;
+        const p = rock.root.position, previous = rock.previousPosition ?? p;
+        // Sweep in the moving body's frame. At full boost a small asteroid can
+        // cross an entire shot segment between frames.
         const time = segmentSphereHit(
-          this.start.x, this.start.y, this.start.z, this.end.x, this.end.y, this.end.z,
-          p.x, p.y, p.z, rock.radius * .93,
+          this.start.x-previous.x, this.start.y-previous.y, this.start.z-previous.z,
+          this.end.x-p.x, this.end.y-p.y, this.end.z-p.z,
+          0, 0, 0, rock.radius * .93,
         );
         if (time !== null && time < nearest) { nearest = time; hit = rock; }
       }
-      if (hit) {
+      for (const target of combat?.targets ?? []) {
+        if (!target.active) continue;
+        const p = target.position, previous=target.previousPosition ?? p;
+        const time = segmentSphereHit(this.start.x-previous.x,this.start.y-previous.y,this.start.z-previous.z,
+          this.end.x-p.x,this.end.y-p.y,this.end.z-p.z,0,0,0,target.radius);
+        if (time !== null && time < nearest) { nearest=time; hostile=target; hit=null; }
+      }
+      if (hit || hostile) {
         this.impact.copy(this.start).lerp(this.end, nearest);
         shot.life = 0;
         const power = shot.damage ?? damage;
-        hit.hp -= power;
-        onHit(hit, this.impact, shot.kind);
+        if (hit) { hit.hp -= power; onHit(hit, this.impact, shot.kind); }
+        if (hostile) combat!.hit(hostile, power, this.impact);
         if (shot.kind === 'plasma') {
           onBlast(this.impact);
           for (const rock of rocks) {
@@ -92,6 +110,11 @@ export class Projectiles {
             if (distance >= PLASMA_RADIUS) continue;
             rock.hp -= power * .7 * (1 - distance / PLASMA_RADIUS);
             onHit(rock, rock.root.position, shot.kind);
+          }
+          for (const target of combat?.targets ?? []) {
+            if (target===hostile || !target.active || !alive()) continue;
+            const distance=Math.max(0,target.position.distanceTo(this.impact)-target.radius*.5);
+            if (distance<PLASMA_RADIUS) combat!.hit(target,power*.7*(1-distance/PLASMA_RADIUS),target.position);
           }
         }
       }

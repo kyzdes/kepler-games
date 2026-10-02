@@ -12,6 +12,10 @@ export const SECTOR_HAZARDS = [
 export function sectorHazards(sector: number) {
   return SECTOR_HAZARDS[Math.max(0, Math.min(SECTOR_HAZARDS.length - 1, Math.floor(sector) - 1))];
 }
+export function flightHint(sector: number, mode: string): string {
+  return mode==='endless' && sector>SECTOR_HAZARDS.length
+    ? 'Сохраняйте добычу · эвакуация в мастерской' : sectorHazards(sector).hint;
+}
 export function asteroidKind(sector: number, roll: number): AsteroidKind {
   const odds = sectorHazards(sector);
   if (roll < odds.volatile) return 'volatile';

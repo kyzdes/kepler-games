@@ -26,7 +26,17 @@ export function createFlightHud(toast: (message: string) => void) {
     $('shield-fill').style.transform = `scaleX(${r.shield / r.maxShield})`;
     $('hull-fill').style.transform = `scaleX(${r.hull / 100})`;
     $('hull-fill').classList.toggle('critical', r.hull < 30);
-    $('sector-progress').style.transform = `scaleX(${r.sectorTime / SECTOR_SECONDS})`;
+    $('sector-progress').style.transform = `scaleX(${Math.min(1,r.sectorTime / SECTOR_SECONDS)})`;
+    setText('flight-limit',r.mode==='endless'?'БЕЗ ПРЕДЕЛА':'6 СЕКТОРОВ');
+    const hostileCount=g.pirates.enemies.filter(enemy=>enemy.active).length;
+    $('encounter-info').hidden=hostileCount===0 || g.boss.active;
+    setText('encounter-info',`${hostileCount} ${hostileCount===1?'ПИРАТ':hostileCount<5?'ПИРАТА':'ПИРАТОВ'} В ПОЯСЕ · КАМНИ ДАЮТ УКРЫТИЕ`);
+    $('boss-hud').hidden=!g.boss.active;
+    $('boss-health-fill').style.transform=`scaleX(${g.boss.health})`;
+    $('boss-health').setAttribute('aria-valuenow',String(Math.ceil(g.boss.health*100)));
+    setText('boss-health-value',`${Math.ceil(g.boss.health*100)}%`);
+    setText('boss-state',g.boss.warning);
+    $('boss-hud').classList.toggle('reactor-open',g.boss.reactorOpen);
     $('boost-fill').style.transform = `scaleX(${g.boostTime > 0 ? g.boostTime / BOOST_DURATION : 1 - g.boostCooldown / r.boostCooldown})`;
     setText('flight-speed', String(Math.round(g.forwardSpeed)));
     setText('roll-status', g.roll.active ? 'ВРАЩЕНИЕ' : g.roll.cooldown > 0 ? `${g.roll.cooldown.toFixed(1)} С` : 'ГОТОВА');
@@ -64,7 +74,7 @@ export function createFlightHud(toast: (message: string) => void) {
     $('damage-flash').style.opacity = String(g.damageFlash * .48);
     $('reticle').style.left = `${(g.pointer.x + 1) * 50}%`;
     $('reticle').style.top = `${(1 - g.pointer.y) * 50}%`;
-    $('reticle').classList.toggle('locked', !!g.target);
+    $('reticle').classList.toggle('locked', !!g.target || !!g.combatTarget);
     const target = g.targetScreen();
     $('target-info').hidden = !target;
     if (target) {
@@ -72,7 +82,7 @@ export function createFlightHud(toast: (message: string) => void) {
       $('target-info').style.top = `${target.y}px`;
       $('target-health').style.transform = `scaleX(${Math.max(0, target.health)})`;
       $('target-info').dataset.kind = target.kind;
-      setText('target-label', target.kind === 'volatile' ? 'ВЗРЫВНОЙ · ДЕРЖИТЕ ДИСТАНЦИЮ' : target.kind === 'armored' ? 'БРОНЕКАМЕНЬ · РЕЗАК' : target.ore ? 'РУДНЫЙ АСТЕРОИД' : 'СИЛИКАТНЫЙ АСТЕРОИД');
+      setText('target-label', target.label ?? (target.kind === 'volatile' ? 'ВЗРЫВНОЙ · ДЕРЖИТЕ ДИСТАНЦИЮ' : target.kind === 'armored' ? 'БРОНЕКАМЕНЬ · РЕЗАК' : target.ore ? 'РУДНЫЙ АСТЕРОИД' : 'СИЛИКАТНЫЙ АСТЕРОИД'));
     }
     drawRadar(g);
   }
@@ -120,6 +130,13 @@ export function createFlightHud(toast: (message: string) => void) {
       }
     }
     ctx.globalAlpha = 1;
+    for (const enemy of g.pirates.enemies) {
+      if (!enemy.active) continue;
+      const x=(enemy.position.x-g.ship.root.position.x)*3.5,y=enemy.position.z*1.02+50;
+      if (Math.hypot(x,y)>132) continue;
+      ctx.fillStyle=enemy.kind==='sniper'?'#ffc687':'#ff765e';
+      ctx.beginPath();ctx.moveTo(x,y-5);ctx.lineTo(x-5,y+4);ctx.lineTo(x+5,y+4);ctx.closePath();ctx.fill();
+    }
     ctx.fillStyle = '#d2efff';
     ctx.beginPath();
     ctx.moveTo(0, 38);

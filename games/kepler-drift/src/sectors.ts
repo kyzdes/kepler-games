@@ -30,6 +30,10 @@ export const SECTOR_VISUALS: readonly SectorVisual[] = [
     planetTint: 0xffb5a3, atmosphere: 0xff5d43, ring: 0xffa765,
     sun: 0xffbd9c, rim: 0xe263aa, fill: 0xff5633, fog: 0x1d070d,
     skyRotation: [.08, 1.2, .10], bump: 1, emission: .48, planetRotation: 3.4 },
+  { planet: '/textures/planet-deep.webp', sky: '/textures/sky-deep.webp',
+    planetTint: 0xffffff, atmosphere: 0x37e7be, ring: 0xf0db91,
+    sun: 0xd2fff3, rim: 0x51e9db, fill: 0xe5bd6e, fog: 0x031710,
+    skyRotation: [.12, 1.8, -.08], bump: .12, emission: .08, planetRotation: 2.1 },
 ];
 
 export const SECTOR_TEXTURE_URLS = [...new Set(SECTOR_VISUALS.flatMap(visual => [visual.planet, visual.sky]).filter((url): url is string => url!==null))];

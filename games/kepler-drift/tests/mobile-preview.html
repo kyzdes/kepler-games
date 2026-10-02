@@ -12,9 +12,11 @@
 <script type="module">
   const frame=document.querySelector('iframe');
   const params=new URLSearchParams(location.search), preview=new URLSearchParams();
-  if(['1','2','3','4','5','6'].includes(params.get('sector-preview'))) preview.set('sector-preview',params.get('sector-preview'));
+  if(params.has('sector-preview')) preview.set('sector-preview',String(Math.max(1,Math.min(24,Number(params.get('sector-preview'))||1))));
   if(['-1','1'].includes(params.get('roll'))) preview.set('roll',params.get('roll'));
-  for(const flag of ['boost','armory','encounter','beam']) if(params.has(flag)) preview.set(flag,'1');
+  for(const flag of ['boost','armory','encounter','beam','pirates','shop']) if(params.has(flag)) preview.set(flag,'1');
+  if(params.has('boss')) preview.set('boss',params.get('boss')==='warning'?'warning':'1');
+  if(params.get('mode')==='endless') preview.set('mode','endless');
   if(['pulse','plasma','cutter'].includes(params.get('weapon'))) preview.set('weapon',params.get('weapon'));
   if(params.has('ore')) preview.set('ore',String(Math.max(0,Math.min(500,Number(params.get('ore')) || 0))));
   frame.src=`/${preview.size?'?'+preview.toString():''}`;

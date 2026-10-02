@@ -1,18 +1,18 @@
 import type { Game } from '../src/game';
-import { SECTOR_SECONDS, TOTAL_SECTORS, collectOre } from '../src/state';
+import { SECTOR_SECONDS, collectOre } from '../src/state';
 import { WEAPON_ORDER } from '../src/weapons';
 
 /** Imported only by the DEV branch. Real game, camera and HUD; paused renderer
  * for repeatable sector screenshots, without a production runtime debug API. */
 export function previewSector(game: Game): void {
   const params=new URLSearchParams(location.search);
-  const sector=Math.max(1,Math.min(TOTAL_SECTORS,Number(params.get('sector-preview')) || 1));
-  game.audio.toggle(); game.start();
+  const sector=Math.max(1,Math.min(24,Number(params.get('sector-preview')) || 1));
+  game.audio.toggle(); game.start(params.get('mode')==='endless'?'endless':'expedition');
   for(let i=1;i<sector;i++) {
     game.run.phase='upgrade'; game.run.elapsed=i*SECTOR_SECONDS; game.nextSector();
   }
   const sim=game as unknown as { tickFlight(dt:number):void; frame():void; lastFrame:number; uiClock:number;
-    asteroidVisuals: {apply(rock: Game['rocks'][number]):void} };
+    invulnerable:number; hooks:{phase(game:Game):void}; asteroidVisuals: {apply(rock: Game['rocks'][number]):void} };
   game.renderer.setAnimationLoop(null);
   const roll=Number(params.get('roll'));
   if(roll) {
@@ -39,6 +39,30 @@ export function previewSector(game: Game): void {
     }
     const p=game.rocks[0].root.position.clone().project(game.camera); game.pointer.set(p.x,p.y);
   }
+  if(params.has('pirates')) {
+    // Staged positions use the actual pooled ships and warning system, with the
+    // simulation stopped. They are visual fixtures, not gameplay spawn rates.
+    game.autoFire=false;
+    game.rocks.forEach(rock=>{ if(Math.abs(rock.root.position.x)<14 && rock.root.position.z>-100) {rock.wait=999;rock.root.visible=false;} });
+    for(const [i,index] of [0,3].entries()) {
+      const enemy=game.pirates.enemies[index];
+      enemy.active=true;enemy.root.visible=true;enemy.hp=enemy.maxHp=i?180:100;
+      enemy.position.set(i?12:-11,i?3:1,i?-57:-37); enemy.previousPosition.copy(enemy.position);
+      enemy.age=5;enemy.side=i?1:-1;enemy.startY=enemy.position.y;
+      enemy.attack.phase='charging';enemy.attack.remaining=1.3;
+      enemy.lockedAim.copy(game.ship.root.position);
+    }
+    game.pirates.update(1/60,{sector,sectorTime:25,elapsed:25,player:game.ship.root.position,worldSpeed:game.forwardSpeed,rocks:game.rocks,bossActive:false});
+    const point=game.pirates.enemies[0].position.clone().project(game.camera);game.pointer.set(point.x,point.y);
+  }
+  if(params.has('boss')) {
+    game.autoFire=false;sim.invulnerable=999;
+    game.rocks.forEach(rock=>{ if(Math.abs(rock.root.position.x)<17) {rock.wait=999;rock.root.visible=false;} });
+    game.boss.spawn(sector<3?3:sector);game.run.sectorTime=57;
+    game.boss.update(params.get('boss')==='warning'?3.3:7.3,{player:game.ship.root.position,rocks:game.rocks,worldSpeed:game.forwardSpeed});
+    const point=game.boss.bodyTarget!.position.clone().project(game.camera);game.pointer.set(point.x,point.y);
+  }
+  if(params.has('shop')) { game.run.sectorTime=SECTOR_SECONDS;game.run.phase='upgrade';sim.hooks.phase(game); }
   if(params.has('beam')) {
     game.selectWeapon('cutter'); game.autoFire=false; game.fireInput.press(42);
     sim.tickFlight(1/60); game.fireInput.clear();

@@ -2,6 +2,8 @@ import * as T from 'three';
 import type { Rock } from './asteroids.ts';
 import { segmentSphereHit } from './state.ts';
 import { CUTTER_RANGE, CUTTER_WIDTH } from './weapons.ts';
+import type { CombatHits } from './projectiles.ts';
+import type { CombatTarget } from './combat.ts';
 
 const UP = new T.Vector3(0, 1, 0);
 
@@ -30,9 +32,11 @@ export class CuttingBeam {
   }
 
   update(muzzles: readonly T.Object3D[], aim: T.Vector3, rocks: readonly Rock[],
-    onCut: (rock: Rock, direction: T.Vector3) => void, alive: () => boolean = () => true): void {
+    onCut: (rock: Rock, direction: T.Vector3) => void, alive: () => boolean = () => true,
+    combat?: CombatHits, damage = 0): void {
     this.root.visible = true;
     const hits = new Map<Rock, number>();
+    const hostiles = new Set<CombatTarget>();
     for (let index = 0; index < this.rays.length; index++) {
       const muzzle = muzzles[index] ?? muzzles[0];
       if (!muzzle) { this.rays[index].visible = false; continue; }
@@ -49,10 +53,19 @@ export class CuttingBeam {
           this.end.x, this.end.y, this.end.z, p.x, p.y, p.z, rock.radius * .93 + CUTTER_WIDTH);
         if (time !== null) hits.set(rock, Math.min(hits.get(rock) ?? Infinity, time));
       }
+      for (const target of combat?.targets ?? []) {
+        if (!target.active || target.position.z > this.start.z) continue;
+        const p=target.position;
+        if (segmentSphereHit(this.start.x,this.start.y,this.start.z,this.end.x,this.end.y,this.end.z,p.x,p.y,p.z,target.radius+CUTTER_WIDTH)!==null) hostiles.add(target);
+      }
     }
     for (const [rock] of [...hits].sort((a, b) => a[1] - b[1])) {
       if (!alive()) break;
       onCut(rock, this.direction);
+    }
+    for (const target of hostiles) {
+      if (!alive()) break;
+      if (target.active && damage>0) combat!.hit(target,damage,target.position);
     }
   }
   hide(): void { this.root.visible = false; }
