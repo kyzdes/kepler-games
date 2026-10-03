@@ -7,7 +7,7 @@ import type { CombatTarget } from '../src/combat.ts';
 import { Projectiles } from '../src/projectiles.ts';
 import { CuttingBeam } from '../src/cutting-beam.ts';
 import { PirateFleet } from '../src/pirates.ts';
-import { MiningBoss } from '../src/mining-boss.ts';
+import { MiningBoss, BOSS_TIMINGS } from '../src/mining-boss.ts';
 import { blastRadius } from '../src/hazards.ts';
 
 function rock(x: number, z: number, kind: Rock['kind'] = 'normal', y = 0): Rock {
@@ -166,9 +166,21 @@ test('the closed boss body absorbs shots using the same target identity that lat
   shots.update(.9, [asteroid], 14, () => assert.fail('A closed body shields the rock behind it'), undefined, undefined, combat);
   assert.equal(body.hp, body.maxHp); assert.equal(asteroid.hp, 100); assert.equal(shots.count, 0); assert.equal(rewards, 0);
   boss.update(7, { player: new T.Vector3(20, 0, 0), rocks: [], worldSpeed: 32 });
+  assert.equal(boss.target,null); assert.equal(boss.reactorOpening,true);
+  boss.hit(body,10000); assert.equal(body.hp,body.maxHp);
+  boss.update(BOSS_TIMINGS.opening, { player: new T.Vector3(20, 0, 0), rocks: [], worldSpeed: 32 });
   assert.equal(boss.target, body); body.previousPosition?.copy(body.position);
-  shots.fire([muzzle], body.position, true, { kind: 'plasma', damage: 1000 });
-  shots.update(.9, [], 14, () => {}, undefined, undefined, combat);
+  for(let opening=1;opening<=3;opening++) {
+    shots.fire([muzzle], body.position, true, { kind: 'plasma', damage: 1000 });
+    shots.update(.9, [], 14, () => {}, undefined, undefined, combat);
+    if(opening<3) {
+      assert.equal(boss.defeated,false); assert.equal(rewards,0); assert.equal(boss.reactorOpen,false);
+      assert.ok(Math.abs(body.hp-body.maxHp*(1-opening*.37))<1e-6);
+      boss.update(BOSS_TIMINGS.closing+BOSS_TIMINGS.warning+BOSS_TIMINGS.firing+BOSS_TIMINGS.recovery+BOSS_TIMINGS.opening,
+        {player:new T.Vector3(20,0,0),rocks:[],worldSpeed:32});
+      body.previousPosition?.copy(body.position);assert.equal(boss.reactorOpen,true);
+    }
+  }
   assert.equal(body.active, false); assert.equal(boss.defeated, true); assert.equal(rewards, 1);
   shots.update(2, [], 14, () => {}, undefined, undefined, combat); boss.reset();
   assert.equal(rewards, 1); assert.equal(boss.bodyTarget, null);

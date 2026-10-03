@@ -5,13 +5,14 @@ import { createMiningBossModel } from './mining-boss-model.ts';
 import { segmentSphereHit } from './state.ts';
 
 export const BOSS_CUTTER_DPS = 180;
-export const BOSS_TIMINGS = { approach: 3, warning: 1.6, firing: .32, recovery: 2.08, exposed: 4, closing: 1 } as const;
-export type BossPhase = 'idle' | 'approach' | 'warning' | 'firing' | 'recovery' | 'exposed' | 'closing' | 'defeated';
-export type BossEvent = 'warning' | 'fire' | 'open' | 'close';
+export const BOSS_OPENING_DAMAGE_FRACTION = .37;
+export const BOSS_TIMINGS = { approach: 3, warning: 1.6, firing: .32, recovery: 2.08, opening: .65, exposed: 4, closing: 1 } as const;
+export type BossPhase = 'idle' | 'approach' | 'warning' | 'firing' | 'recovery' | 'opening' | 'exposed' | 'closing' | 'defeated';
+export type BossEvent = 'warning' | 'fire' | 'opening' | 'open' | 'close';
 
 export function bossMaxHealth(sector: number): number {
   const current = Number.isFinite(sector) ? Math.max(3, Math.floor(sector)) : 3;
-  return Math.min(1380, 820 + Math.floor((current - 3) / 3) * 280);
+  return Math.min(3600, 1800 + Math.floor((current - 3) / 3) * 600);
 }
 
 /** A deterministic encounter clock, independent of rendering and DOM. */
@@ -20,25 +21,47 @@ export class BossBattery {
   hp = 0;
   maxHp = 0;
   remaining = 0;
+  openings = 0;
+  openingDamage = 0;
+  private overloadClosure = false;
 
   get active(): boolean { return this.phase !== 'idle' && this.phase !== 'defeated'; }
   get defeated(): boolean { return this.phase === 'defeated'; }
   get exposed(): boolean { return this.phase === 'exposed'; }
+  get overloaded(): boolean { return this.phase === 'closing' && this.overloadClosure; }
+  get openingDamageLimit(): number { return this.maxHp * BOSS_OPENING_DAMAGE_FRACTION; }
+  /** Visual armor and damage eligibility share the same deterministic clock. */
+  get shutterAmount(): number {
+    if (this.exposed) return 1;
+    const progress = this.phase === 'opening' ? 1 - this.remaining / BOSS_TIMINGS.opening
+      : this.phase === 'closing' ? this.remaining / BOSS_TIMINGS.closing : 0;
+    const amount = Math.max(0, Math.min(1, progress));
+    return amount * amount * (3 - 2 * amount);
+  }
 
   spawn(sector: number): void {
+    this.reset();
     this.maxHp = bossMaxHealth(sector); this.hp = this.maxHp;
     this.phase = 'approach'; this.remaining = BOSS_TIMINGS.approach;
   }
 
-  reset(): void { this.phase = 'idle'; this.hp = 0; this.maxHp = 0; this.remaining = 0; }
+  reset(): void {
+    this.phase = 'idle'; this.hp = 0; this.maxHp = 0; this.remaining = 0;
+    this.openings = 0; this.openingDamage = 0; this.overloadClosure = false;
+  }
 
   /** Returns true only for the single hit that destroys the open reactor. */
   hit(damage: number): boolean {
     if (!this.active || !this.exposed || !Number.isFinite(damage) || damage <= 0) return false;
-    this.hp = Math.max(0, this.hp - damage);
-    if (this.hp > 0) return false;
-    this.phase = 'defeated'; this.remaining = 0;
-    return true;
+    // Every source uses this budget, including simultaneous barrels and area
+    // damage. Crossing it immediately protects the reactor for the next cycle.
+    const accepted = Math.min(damage, this.hp, Math.max(0, this.openingDamageLimit - this.openingDamage));
+    this.hp = Math.max(0, this.hp - accepted); this.openingDamage += accepted;
+    if (this.hp <= 0) { this.phase = 'defeated'; this.remaining = 0; return true; }
+    if (this.openingDamage >= this.openingDamageLimit - 1e-9) {
+      this.phase = 'closing'; this.remaining = BOSS_TIMINGS.closing; this.overloadClosure = true;
+    }
+    return false;
   }
 
   update(dt: number): BossEvent[] {
@@ -50,14 +73,19 @@ export class BossBattery {
     while (left + 1e-10 >= this.remaining) {
       left = Math.max(0, left - this.remaining);
       if (this.phase === 'approach' || this.phase === 'closing') {
+        this.overloadClosure = false;
         this.phase = 'warning'; this.remaining = BOSS_TIMINGS.warning; events.push('warning');
       } else if (this.phase === 'warning') {
         this.phase = 'firing'; this.remaining = BOSS_TIMINGS.firing; events.push('fire');
       } else if (this.phase === 'firing') {
         this.phase = 'recovery'; this.remaining = BOSS_TIMINGS.recovery;
       } else if (this.phase === 'recovery') {
+        this.phase = 'opening'; this.remaining = BOSS_TIMINGS.opening; events.push('opening');
+      } else if (this.phase === 'opening') {
+        this.openings++; this.openingDamage = 0;
         this.phase = 'exposed'; this.remaining = BOSS_TIMINGS.exposed; events.push('open');
       } else {
+        this.overloadClosure = false;
         this.phase = 'closing'; this.remaining = BOSS_TIMINGS.closing; events.push('close');
       }
     }
@@ -129,7 +157,6 @@ export class MiningBoss {
   private readonly previousPlayer = new T.Vector3();
   private hasPlayer = false;
   private age = 0;
-  private openAmount = 0;
   private sector = 3;
   private attackCount = 1;
   private readonly glow: T.MeshStandardMaterial | T.MeshBasicMaterial;
@@ -155,19 +182,24 @@ export class MiningBoss {
   get defeated(): boolean { return this.battery.defeated; }
   get health(): number { return this.battery.maxHp > 0 ? this.battery.hp / this.battery.maxHp : 0; }
   get reactorOpen(): boolean { return this.battery.exposed; }
+  get reactorOpening(): boolean { return this.battery.phase === 'opening'; }
+  get reactorOverloaded(): boolean { return this.battery.overloaded; }
   get target(): CombatTarget | null { return this.active && this.reactorOpen ? this.reactorTarget : null; }
   get bodyTarget(): CombatTarget | null { return this.active ? this.reactorTarget : null; }
   get warning(): string {
     if (!this.active) return '';
     if (this.battery.phase === 'approach') return 'Добывающий корабль · приготовьтесь';
     if (this.battery.phase === 'warning' || this.battery.phase === 'firing') return 'Уйдите с линии выстрела';
-    if (this.reactorOpen) return 'Реактор открыт · время резака';
+    if (this.reactorOpening) return 'Броня раскрывается · дождитесь синего ядра';
+    if (this.reactorOpen) return 'Реактор открыт · атакуйте синее ядро';
+    if (this.reactorOverloaded) return 'Реактор перегружен · броня закрывается';
+    if (this.battery.phase === 'closing') return 'Броня закрывается · реактор защищён';
     return 'Броня закрыта · держите дистанцию';
   }
 
   reset(): void {
     this.battery.reset(); this.root.visible = false; this.warnings.visible = false;
-    this.reactorTarget.active = false; this.age = 0; this.openAmount = 0; this.hasPlayer = false;
+    this.reactorTarget.active = false; this.age = 0; this.hasPlayer = false;
     this.reactorTarget.previousPosition!.copy(this.reactorTarget.position);
     for (const lane of this.lanes) { lane.line.visible = false; lane.hit = false; }
     this.updateShutters(0);
@@ -193,6 +225,7 @@ export class MiningBoss {
     if (this.battery.phase !== 'warning' && this.battery.phase !== 'firing') {
       this.root.position.y = 2 + Math.sin(this.age * .45) * (this.reducedMotion ? .12 : .35);
     }
+    this.updateShutters(this.battery.shutterAmount);
     this.root.updateMatrixWorld(true); this.syncTarget();
     for (const event of events) {
       if (event === 'warning') this.lockLanes(ctx.player);
@@ -213,16 +246,14 @@ export class MiningBoss {
         if (contact) { lane.hit = true; this.hooks.hitPlayer(this.sector >= 6 ? 30 : 38, 'Буровой залп'); }
       }
     }
-    const opening = this.reactorOpen ? 1 : 0;
-    this.openAmount += (opening - this.openAmount) * (1 - Math.exp(-step * 14));
-    this.updateShutters(this.openAmount); this.updateGlow();
+    this.updateGlow();
     for (const drill of this.model.drills) drill.rotation.z += step * (firing ? 5 : warning ? 2.2 : .8);
     this.previousPlayer.copy(ctx.player);
   }
 
   hit(target: CombatTarget, damage: number): void {
     if (target !== this.reactorTarget || !this.active) return;
-    const destroyed = this.battery.hit(damage); this.syncTarget();
+    const destroyed = this.battery.hit(damage); this.syncTarget(); this.updateGlow();
     if (destroyed) {
       this.root.visible = false; this.warnings.visible = false; this.reactorTarget.active = false;
       this.hooks.destroyed(this.reactorTarget.position.clone());
@@ -239,7 +270,9 @@ export class MiningBoss {
     this.model.reactor.getWorldPosition(this.reactorTarget.position);
     this.reactorTarget.hp = this.battery.hp; this.reactorTarget.maxHp = this.battery.maxHp;
     this.reactorTarget.active = this.active;
-    this.reactorTarget.label = this.reactorOpen ? 'РЕАКТОР ОТКРЫТ' : 'РЕАКТОР ЗАКРЫТ';
+    this.reactorTarget.label = this.reactorOpen ? 'РЕАКТОР ОТКРЫТ'
+      : this.reactorOpening ? 'БРОНЯ РАСКРЫВАЕТСЯ'
+      : this.reactorOverloaded ? 'РЕАКТОР ПЕРЕГРУЖЕН' : 'РЕАКТОР ЗАКРЫТ';
   }
 
   private lockLanes(player: T.Vector3): void {
@@ -267,7 +300,7 @@ export class MiningBoss {
   }
 
   private updateGlow(): void {
-    const color = this.reactorOpen ? 0x69e8ff : 0xe99b45;
+    const color = this.reactorOpen ? 0x69e8ff : this.reactorOverloaded ? 0xff7045 : 0xe99b45;
     this.glow.color.setHex(color);
     if (this.glow instanceof T.MeshStandardMaterial) {
       this.glow.emissive.setHex(color);

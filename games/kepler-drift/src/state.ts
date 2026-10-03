@@ -1,4 +1,6 @@
 import type { RunMode } from './expedition.ts';
+import { WEAPONS, MAX_ENERGY_LEVEL } from './weapons.ts';
+import type { WeaponId } from './weapons.ts';
 
 export type Phase = 'ready' | 'flying' | 'paused' | 'armory' | 'upgrade' | 'ended';
 export type UpgradeId = 'laser' | 'engine' | 'magnet' | 'shield' | 'repair' | 'multishot';
@@ -10,23 +12,25 @@ export interface Run {
   shield: number; maxShield: number; damage: number; fireInterval: number;
   magnet: number; speed: number; boostCooldown: number; multishot: boolean;
   levels: Record<UpgradeId, number>; won: boolean;
+  unlockedWeapons: Record<WeaponId, boolean>;
 }
 export const SECTOR_SECONDS = 75;
 export const SECTORS = ['ВНЕШНИЙ ПОЯС', 'РАЗЛОМ КЕПЛЕРА', 'СЕРДЦЕ ПОЯСА', 'ТУМАННОСТЬ ЭХО', 'ГРОЗОВОЙ ФРОНТ', 'КОРОНА КЕПЛЕРА'];
 export const TOTAL_SECTORS = SECTORS.length;
 export const UPGRADES: Record<UpgradeId, { name: string; description: string; cost: number; icon: string; color: string }> = {
-  laser: { name: 'Энергоконтур', description: 'Урон импульсов и плазмы +35%. Перезарядка резака −0,8 с, до 7,2 с.', cost: 55, icon: 'crosshair', color: 'orange' },
+  laser: { name: 'Энергоконтур', description: 'Урон всего арсенала +35%. Перезарядка резака −0,8 с. Максимум — уровень 5.', cost: 55, icon: 'crosshair', color: 'orange' },
   engine: { name: 'Векторная тяга', description: 'Манёвренность +18%. Форсаж восстанавливается быстрее.', cost: 45, icon: 'flame', color: 'blue' },
   magnet: { name: 'Гравитационный захват', description: 'Радиус притяжения руды +45%. Меньше рискованных манёвров.', cost: 40, icon: 'magnet', color: 'gold' },
   shield: { name: 'Защитный контур', description: 'Ёмкость щита +25. Полностью восстанавливает щит.', cost: 60, icon: 'shield', color: 'blue' },
   repair: { name: 'Наноремонт', description: 'Восстанавливает 50 единиц корпуса и весь щит.', cost: 30, icon: 'wrench', color: 'gold' },
-  multishot: { name: 'Тройной залп', description: 'Три импульса из каждого ствола или три плазменных снаряда. На резак не влияет.', cost: 100, icon: 'scan-line', color: 'orange' },
+  multishot: { name: 'Тройной залп', description: 'Три импульса из каждого ствола или три плазменных снаряда. Картечь, ракеты и резак сохраняют свой залп.', cost: 100, icon: 'scan-line', color: 'orange' },
 };
 export function createRun(mode: RunMode = 'expedition'): Run {
   return { mode, pirateKills: 0, bossKills: 0, phase: 'ready', sector: 1, sectorTime: 0, elapsed: 0, ore: 0, mined: 0, kills: 0,
     hull: 100, maxHull: 100, shield: 75, maxShield: 75, damage: 14, fireInterval: 0.19,
     magnet: 21, speed: 11, boostCooldown: 4.5, multishot: false,
-    levels: { laser: 1, engine: 1, magnet: 1, shield: 1, repair: 0, multishot: 0 }, won: false };
+    levels: { laser: 1, engine: 1, magnet: 1, shield: 1, repair: 0, multishot: 0 }, won: false,
+    unlockedWeapons: { pulse: true, plasma: false, scatter: false, seeker: false, cutter: false } };
 }
 export function clamp(n: number, min: number, max: number): number { return Math.max(min, Math.min(max, n)); }
 /** More encounters each sector, with a gradual ramp within the sector. */
@@ -46,10 +50,22 @@ export function splitOre(total: number, maxPieces: number): number[] {
 export function upgradeCost(run: Run, id: UpgradeId): number {
   return UPGRADES[id].cost + Math.max(0, run.levels[id] - 1) * 25;
 }
+export function canBuyWeapon(run: Run, id: WeaponId): boolean {
+  return (run.phase === 'armory' || run.phase === 'upgrade') && !run.unlockedWeapons[id]
+    && Number.isFinite(run.ore) && run.ore >= WEAPONS[id].cost;
+}
+export function buyWeapon(run: Run, id: WeaponId): boolean {
+  if (!canBuyWeapon(run, id)) return false;
+  run.ore -= WEAPONS[id].cost; run.unlockedWeapons[id] = true;
+  return true;
+}
+export function upgradeMaxed(run: Run, id: UpgradeId): boolean {
+  return (id === 'laser' && run.levels.laser >= MAX_ENERGY_LEVEL) || (id === 'multishot' && run.multishot);
+}
 export function buyUpgrade(run: Run, id: UpgradeId): boolean {
   const cost = upgradeCost(run, id);
   const shopOpen=run.phase==='upgrade' || (run.phase==='armory' && (id==='laser' || id==='multishot'));
-  if (!shopOpen || run.ore < cost || (id === 'multishot' && run.multishot) || (id === 'repair' && run.hull === run.maxHull && run.shield === run.maxShield)) return false;
+  if (!shopOpen || run.ore < cost || upgradeMaxed(run, id) || (id === 'repair' && run.hull === run.maxHull && run.shield === run.maxShield)) return false;
   run.ore -= cost;
   run.levels[id]++;
   if (id === 'laser') { run.damage *= 1.35; run.fireInterval = Math.max(0.09, run.fireInterval * 0.96); }
@@ -71,7 +87,7 @@ export function mulberry32(seed: number): () => number {
   return () => { let t = seed += 0x6D2B79F5; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 }
 export function rollUpgrades(run: Run, rng = Math.random): UpgradeId[] {
-  const ids = (Object.keys(UPGRADES) as UpgradeId[]).filter(id => !(id === 'multishot' && run.multishot));
+  const ids = (Object.keys(UPGRADES) as UpgradeId[]).filter(id => !upgradeMaxed(run, id));
   for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
   const chosen = ids.slice(0, 3);
   if (run.hull < 60 && !chosen.includes('repair')) chosen[2] = 'repair';

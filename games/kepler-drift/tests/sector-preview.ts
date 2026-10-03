@@ -25,11 +25,17 @@ export function previewSector(game: Game): void {
     for(let i=0;i<24;i++) sim.tickFlight(1/60);
   }
   if(params.has('armory')) {
-    collectOre(game.run,Math.max(0,Math.min(500,Number(params.get('ore')) || 0)));
+    collectOre(game.run,Math.max(0,Math.min(2000,Number(params.get('ore')) || 0)));
     game.openArmory();
   }
   const weapon=params.get('weapon');
-  if(WEAPON_ORDER.some(id=>id===weapon)) game.selectWeapon(weapon as typeof WEAPON_ORDER[number]);
+  const visualWeapons=!params.has('armory') && !params.has('shop');
+  if(WEAPON_ORDER.some(id=>id===weapon) && visualWeapons) {
+    const id=weapon as typeof WEAPON_ORDER[number];
+    // A weapon-only picture grants only its requested gun. Shop previews keep
+    // the real locked inventory so prices and purchases remain reviewable.
+    game.run.unlockedWeapons[id]=true;game.selectWeapon(id);
+  }
   if(params.has('encounter')) {
     for (const [i,x,y,z,radius,kind] of [[0,0,.43,-36,2.8,'normal'],[1,0,.43,-64,3.2,'armored'],
       [2,0,.43,-100,2.5,'normal'],[3,-9,2,-10,2.4,'volatile']] as const) {
@@ -59,16 +65,19 @@ export function previewSector(game: Game): void {
     game.autoFire=false;sim.invulnerable=999;
     game.rocks.forEach(rock=>{ if(Math.abs(rock.root.position.x)<17) {rock.wait=999;rock.root.visible=false;} });
     game.boss.spawn(sector<3?3:sector);game.run.sectorTime=57;
-    game.boss.update(params.get('boss')==='warning'?3.3:7.3,{player:game.ship.root.position,rocks:game.rocks,worldSpeed:game.forwardSpeed});
+    const phase=params.get('boss');
+    game.boss.update(phase==='warning'?3.3:phase==='opening'?7.2:7.7,{player:game.ship.root.position,rocks:game.rocks,worldSpeed:game.forwardSpeed});
+    if(phase==='overloaded' && game.boss.target) game.boss.hit(game.boss.target,game.boss.target.maxHp);
     const point=game.boss.bodyTarget!.position.clone().project(game.camera);game.pointer.set(point.x,point.y);
   }
   if(params.has('shop')) { game.run.sectorTime=SECTOR_SECONDS;game.run.phase='upgrade';sim.hooks.phase(game); }
-  if(params.has('beam')) {
+  if(params.has('beam') && visualWeapons) {
+    game.run.unlockedWeapons.cutter=true;
     game.selectWeapon('cutter'); game.autoFire=false; game.fireInput.press(42);
     sim.tickFlight(1/60); game.fireInput.clear();
   }
   sim.uiClock=1; sim.lastFrame=performance.now(); sim.frame();
-  if(params.has('beam')) {
+  if(params.has('beam') && visualWeapons) {
     // Show the separated halves rather than the coincident first instant.
     for(let i=0;i<10;i++) sim.tickFlight(1/60);
     sim.uiClock=1; sim.lastFrame=performance.now(); sim.frame();

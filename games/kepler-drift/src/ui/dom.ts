@@ -1,5 +1,5 @@
-import { createIcons, Orbit, Gem, Shield, HeartPulse, Crosshair, Flame, Magnet, Volume2, VolumeX, Maximize, Pause, HelpCircle, ArrowUpRight, ArrowRight, Play, RotateCcw, Wrench, ScanLine, Check, X, Mouse, Keyboard, ChevronRight } from 'lucide';
-const iconSet = { Orbit, Gem, Shield, HeartPulse, Crosshair, Flame, Magnet, Volume2, VolumeX, Maximize, Pause, HelpCircle, ArrowUpRight, ArrowRight, Play, RotateCcw, Wrench, ScanLine, Check, X, Mouse, Keyboard, ChevronRight };
+import { createIcons, Orbit, Gem, Shield, HeartPulse, Crosshair, Flame, Magnet, Volume2, VolumeX, Maximize, Pause, HelpCircle, ArrowUpRight, ArrowRight, Play, RotateCcw, Wrench, ScanLine, Check, X, Mouse, Keyboard, ChevronRight, Expand, Rocket } from 'lucide';
+const iconSet = { Orbit, Gem, Shield, HeartPulse, Crosshair, Flame, Magnet, Volume2, VolumeX, Maximize, Pause, HelpCircle, ArrowUpRight, ArrowRight, Play, RotateCcw, Wrench, ScanLine, Check, X, Mouse, Keyboard, ChevronRight, Expand, Rocket };
 export const icons = () => createIcons({ icons: iconSet, attrs: { 'stroke-width': 1.5 } });
 export const icon = (name: string, cls = '') => `<i data-lucide="${name}" class="${cls}" aria-hidden="true"></i>`;
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;

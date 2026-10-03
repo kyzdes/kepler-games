@@ -1,5 +1,7 @@
 import { Game } from '../src/game';
 import { SECTOR_VISUALS } from '../src/sectors';
+import { WEAPON_ORDER, WEAPONS } from '../src/weapons';
+import type { WeaponId } from '../src/weapons';
 import * as T from 'three';
 
 // Development-only regression fixture: sample the actual final framebuffer,
@@ -15,7 +17,8 @@ const initialSamples = game.composer.renderTarget1.samples;
 const gl = game.renderer.getContext();
 const atmosphere = game as unknown as { cosmos: { update(dt: number): void; setSector(sector:number): void } };
 const blur=game as unknown as { boostBlurPass: {enabled:boolean; uniforms:{strength:{value:number}}} };
-const simulation=game as unknown as {tickFlight(dt:number):void; asteroidVisuals:{apply(rock:Game['rocks'][number]):void}};
+const simulation=game as unknown as {tickFlight(dt:number):void; asteroidVisuals:{apply(rock:Game['rocks'][number]):void};
+  invulnerable:number;projectiles:{count:number}};
 // This fixture checks graphics; audio has its own user-initiated fixture.
 game.audio.start=()=>{};
 
@@ -66,50 +69,67 @@ async function measure(mode: ProbeMode): Promise<void> {
   blur.boostBlurPass.enabled=true; game.composer.render();
   const centerDelta=averageDelta(centerBefore,readSquare(.5,.5)), edgeDelta=averageDelta(edgeBefore,readSquare(.05,.5));
   blur.boostBlurPass.enabled=false;
-  game.start(); game.autoFire=false; game.run.sector=3; atmosphere.cosmos.setSector(3);
-  for(const rock of game.rocks) { rock.wait=999; rock.root.visible=false; }
-  for(const [i,z,kind] of [[0,-35,'normal'],[1,-65,'armored'],[2,-100,'volatile']] as const) {
-    const rock=game.rocks[i]; rock.wait=0; rock.kind=kind; rock.radius=3; rock.hp=rock.maxHp=300;
-    rock.root.position.set(0,.43,z); rock.root.scale.setScalar(3); rock.root.visible=true;
-    simulation.asteroidVisuals.apply(rock);
-  }
-  const aim=game.rocks[0].root.position.clone().project(game.camera); game.pointer.set(aim.x,aim.y);
-  game.selectWeapon('cutter'); game.fireInput.press(7);
   const weaponMeans:number[]=[], weaponErrors:number[]=[];
-  for(let frame=0;frame<180;frame++) {
-    await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
-    if(frame===110) {
-      game.selectWeapon('plasma');
-      const target=game.rocks[0]; target.wait=0; target.kind='normal'; target.hp=300; target.root.visible=true;
-      target.root.position.set(0,.43,-35); simulation.asteroidVisuals.apply(target);
+  const weaponScenes:{id:WeaponId;name:string;frames:number;minMean:number;activeFrames:number;kills:number;selected:boolean}[]=[];
+  let weaponKills=0;
+  for(const id of ['cutter','plasma','scatter','seeker','pulse'] as const) {
+    game.start();game.autoFire=false;game.run.sector=3;atmosphere.cosmos.setSector(3);simulation.invulnerable=999;
+    // Explicit graphical staging, not a purchase test or a production unlock.
+    for(const weapon of WEAPON_ORDER) game.run.unlockedWeapons[weapon]=true;
+    game.rocks.forEach(rock=>{rock.wait=999;rock.root.visible=false;});
+    let aimPosition=new T.Vector3(0,.43,-35);
+    if(id==='seeker') {
+      const enemy=game.pirates.enemies[0];enemy.active=true;enemy.root.visible=true;
+      enemy.hp=enemy.maxHp=999;enemy.position.set(12,1.5,-70);enemy.previousPosition.copy(enemy.position);
+      enemy.age=3;enemy.side=1;enemy.startY=1.5;enemy.attack.phase='cooldown';enemy.attack.remaining=99;
+      aimPosition=enemy.position.clone();
+    } else {
+      for(const [i,z,kind] of [[0,-35,'normal'],[1,-65,'armored'],[2,-100,'volatile']] as const) {
+        const rock=game.rocks[i];rock.wait=0;rock.kind=kind;rock.radius=3;rock.hp=rock.maxHp=300;
+        rock.root.position.set(0,.43,z);rock.previousPosition?.copy(rock.root.position);
+        rock.root.scale.setScalar(3);rock.root.visible=true;simulation.asteroidVisuals.apply(rock);
+      }
     }
-    if(frame===150) game.selectWeapon('pulse');
-    simulation.tickFlight(1/60); game.composer.render();
-    const pixels=new Uint8Array(gl.drawingBufferWidth*4);
-    gl.readPixels(0,Math.floor(gl.drawingBufferHeight*.5),gl.drawingBufferWidth,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
-    let total=0; for(let i=0;i<pixels.length;i+=4) total+=(pixels[i]+pixels[i+1]+pixels[i+2])/3;
-    weaponMeans.push(total/gl.drawingBufferWidth);
-    const error=gl.getError(); if(error) weaponErrors.push(error);
+    const aim=aimPosition.project(game.camera);game.pointer.set(aim.x,aim.y);
+    game.selectWeapon(id);game.fireInput.press(7);
+    const localMeans:number[]=[],frames=id==='cutter'?120:60;
+    let activeFrames=0;
+    for(let frame=0;frame<frames;frame++) {
+      await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+      simulation.tickFlight(1/60);game.composer.render();
+      if(id==='cutter'?game.weapons.cutting:simulation.projectiles.count>0) activeFrames++;
+      const pixels=new Uint8Array(gl.drawingBufferWidth*4);
+      gl.readPixels(0,Math.floor(gl.drawingBufferHeight*.5),gl.drawingBufferWidth,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+      let total=0;for(let i=0;i<pixels.length;i+=4) total+=(pixels[i]+pixels[i+1]+pixels[i+2])/3;
+      const mean=total/gl.drawingBufferWidth;weaponMeans.push(mean);localMeans.push(mean);
+      const error=gl.getError();if(error) weaponErrors.push(error);
+    }
+    weaponKills+=game.run.kills;
+    weaponScenes.push({id,name:WEAPONS[id].name,frames,minMean:Number(Math.min(...localMeans).toFixed(2)),
+      activeFrames,kills:game.run.kills,selected:game.weapons.selected===id});
+    game.fireInput.clear();game.pause();
   }
-  game.fireInput.clear(); game.pause();
-  const weaponKills=game.run.kills;
   const encounterMeans:number[]=[],encounterErrors:number[]=[];
   game.start();game.autoFire=false;
+  game.run.unlockedWeapons.cutter=true;simulation.invulnerable=999;
   game.rocks.forEach(rock=>{rock.wait=999;rock.root.visible=false;});
   for(const [i,index] of [0,3].entries()) {
     const enemy=game.pirates.enemies[index];enemy.active=true;enemy.root.visible=true;
     enemy.hp=enemy.maxHp=200;enemy.position.set(i?12:-11,2,i?-57:-37);enemy.previousPosition.copy(enemy.position);enemy.age=4;
     enemy.attack.phase='charging';enemy.attack.remaining=.8;enemy.lockedAim.copy(game.ship.root.position);
   }
+  let bossStartHP=0,bossBeamFrames=0;
   for(let frame=0;frame<120;frame++) {
     await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
     if(frame===60) {
       game.run.sector=3;atmosphere.cosmos.setSector(3);game.boss.spawn(3);
-      game.boss.update(7.3,{player:game.ship.root.position,rocks:game.rocks,worldSpeed:game.forwardSpeed});
+      game.boss.update(7.7,{player:game.ship.root.position,rocks:game.rocks,worldSpeed:game.forwardSpeed});
+      bossStartHP=game.boss.battery.hp;
       const target=game.boss.bodyTarget!.position.clone().project(game.camera);game.pointer.set(target.x,target.y);
       game.selectWeapon('cutter');game.fireInput.press(7);
     }
     simulation.tickFlight(1/60);game.composer.render();
+    if(frame>=60 && game.weapons.cutting && game.boss.reactorOpen) bossBeamFrames++;
     const pixels=new Uint8Array(gl.drawingBufferWidth*4);
     gl.readPixels(0,Math.floor(gl.drawingBufferHeight*.5),gl.drawingBufferWidth,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
     let total=0;for(let i=0;i<pixels.length;i+=4) total+=(pixels[i]+pixels[i+1]+pixels[i+2])/3;
@@ -121,16 +141,21 @@ async function measure(mode: ProbeMode): Promise<void> {
   // sky, planet and ship are discarded. Three scanlines cover that distinction.
   const passed = drops === 0 && Math.min(...means) >= 15 && errors.length === 0 && centerDelta<.1 && edgeDelta>.1
     && Math.min(...weaponMeans)>=15 && weaponErrors.length===0 && weaponKills>=3
-    && Math.min(...encounterMeans)>=15 && encounterErrors.length===0;
+    && weaponScenes.length===WEAPON_ORDER.length && weaponScenes.every(scene=>scene.selected && scene.activeFrames>0)
+    && Math.min(...encounterMeans)>=15 && encounterErrors.length===0
+    && bossBeamFrames>0 && game.boss.battery.hp>0 && bossStartHP-game.boss.battery.hp>100;
   result.textContent = JSON.stringify({
-    passed, mode, frames: means.length, msaaSamples: game.composer.renderTarget1.samples,
+    passed, mode, frames: means.length, totalFrames:means.length+weaponMeans.length+encounterMeans.length,
+    msaaSamples: game.composer.renderTarget1.samples,
     brightnessDrops: drops, minMean: Math.min(...means), maxMean: peak,
     sectors: Array.from({length:SECTOR_VISUALS.length},(_,i)=>({sector:i+1,minMean:Math.min(...means.slice(i*60,i*60+60)),maxMean:Math.max(...means.slice(i*60,i*60+60))})),
     minPeak: Math.min(...maxima), glErrors: errors, firstFrames: means.slice(0, 12),
     blurPixels:{centerDelta,edgeDelta},
     weapons:{frames:weaponMeans.length,minMean:Number(Math.min(...weaponMeans).toFixed(2)),glErrors:weaponErrors,
-      kills:weaponKills,beamRemaining:game.weapons.remaining},
-    encounters:{frames:encounterMeans.length,minMean:Number(Math.min(...encounterMeans).toFixed(2)),glErrors:encounterErrors},
+      kills:weaponKills,beamRemaining:game.weapons.remaining,scenes:weaponScenes},
+    encounters:{frames:encounterMeans.length,minMean:Number(Math.min(...encounterMeans).toFixed(2)),glErrors:encounterErrors,
+      boss:{startHP:bossStartHP,hp:game.boss.battery.hp,beamFrames:bossBeamFrames,label:game.boss.bodyTarget?.label}},
+    assumptions:{arsenal:'all weapons explicitly unlocked for staged graphics only',boss:'real exposure after 7.7 seconds; no forced phase',balanceClaim:false},
   }, null, 2);
   result.dataset.complete='true';
   buttons.forEach(button => button.disabled = false);

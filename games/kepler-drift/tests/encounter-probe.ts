@@ -5,12 +5,13 @@ import type { CombatTarget } from '../src/combat';
 import type { EnemyProjectiles } from '../src/enemy-projectiles';
 import type { Projectiles } from '../src/projectiles';
 import type { Salvage } from '../src/salvage';
+import { WEAPON_ORDER, WEAPONS } from '../src/weapons';
 import type { WeaponId } from '../src/weapons';
 import { visualSector } from '../src/expedition';
 import type { RunMode } from '../src/expedition';
 import { mulberry32, SECTOR_SECONDS } from '../src/state';
 import { PIRATE_GRACE_SECONDS } from '../src/pirate-rules';
-import { BOSS_CUTTER_DPS, BOSS_TIMINGS } from '../src/mining-boss';
+import { BOSS_CUTTER_DPS, BOSS_OPENING_DAMAGE_FRACTION, BOSS_TIMINGS, bossMaxHealth } from '../src/mining-boss';
 import { sectorVisual } from '../src/sectors';
 
 // Development-only integration fixture. All access below stays inside this
@@ -46,6 +47,9 @@ const step = (frames = 1) => {
 const fresh = (mode: RunMode = 'expedition', sector = 1) => {
   game.renderer.setAnimationLoop(null);
   game.start(mode); game.autoFire = false; clearRocks();
+  // Combat is isolated from the shop here: this fixture explicitly unlocks
+  // every gun. The actual paid shop and the pulse-only start have other probes.
+  for (const weapon of WEAPON_ORDER) game.run.unlockedWeapons[weapon] = true;
   sim.rng = mulberry32(61723); game.run.sector = sector;
   game.ship.root.updateMatrixWorld(true); game.camera.updateMatrixWorld(true);
 };
@@ -81,14 +85,30 @@ const updateShots = (frames = 30) => {
 const rewardTotal = () => sim.salvage.drops.reduce((sum, drop) => sum + drop.value, 0);
 const bossContext = () => ({ player: game.ship.root.position, rocks: game.rocks, worldSpeed: game.forwardSpeed });
 const reachBossOpening = () => {
+  let dodged = false;
   for (let frames = 0; frames < 600 && game.run.phase === 'flying' && !game.boss.reactorOpen; frames++) {
     // Staged dodge after the real telegraph locks its aim. No enemy AI update
     // is disabled, and the Game still runs collision, attacks and progression.
-    if (game.boss.battery.phase === 'warning') game.ship.root.position.x = 12;
+    if (game.boss.battery.phase === 'warning' && !dodged) {
+      game.ship.root.position.x = game.ship.root.position.x >= 0 ? -12 : 12;
+      dodged = true;
+    } else if (game.boss.battery.phase !== 'warning') dodged = false;
     step();
   }
   if (!game.boss.target) throw new Error(`Реактор не открылся: ${game.run.phase}/${game.boss.battery.phase}`);
   return game.boss.target;
+};
+const defeatBoss = () => {
+  const openings: { opening: number; before: number; after: number; phase: string }[] = [];
+  for (let cycle = 0; cycle < 3 && !game.boss.defeated; cycle++) {
+    const reactor = reachBossOpening(), before = reactor.hp, opening = game.boss.battery.openings;
+    // A deliberately overpowered synthetic hit goes through the real Game
+    // callback. Its actual per-window cap still requires three attack cycles.
+    sim.hitHostile(reactor, before, reactor.position);
+    openings.push({ opening, before, after: reactor.hp, phase: game.boss.battery.phase });
+  }
+  if (!game.boss.defeated || openings.length !== 3) throw new Error(`Босс не прошёл три настоящих окна: ${game.boss.battery.phase}`);
+  return openings;
 };
 const render = () => { game.scene.updateMatrixWorld(true); game.composer.render(); };
 const paint = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
@@ -97,6 +117,8 @@ const assumptions = {
   seed: 61723,
   timestep: DT,
   scenario: 'synthetic seeded integration cases with isolated rocks, staged actor positions and late-sector clocks',
+  arsenal: 'all guns explicitly unlocked in fresh combat cases; no shop or human balance claim',
+  bossVictory: 'overpowered synthetic Game.hitHostile hits in three real exposed windows; no forced phase or defeat flag',
   balanceClaim: false,
 };
 
@@ -165,7 +187,8 @@ async function runChecks(): Promise<void> {
     const plasmaNear = syntheticEnemy(4, .43, -30, 100);
     const plasmaFar = syntheticEnemy(18, .43, -30, 100);
     aimAt(plasmaDirect.position); sim.fire('plasma'); updateShots();
-    record('Плазма повреждает прямую и соседнюю цели, дальняя цела', plasmaDirect.hp === 65 && plasmaNear.hp < 100 && plasmaNear.hp > 65 && plasmaFar.hp === 100,
+    const plasmaRemaining = 100 - WEAPONS.plasma.damage;
+    record('Усиленная плазма повреждает прямую и соседнюю цели, дальняя цела', plasmaDirect.hp === plasmaRemaining && plasmaNear.hp < 100 && plasmaNear.hp > plasmaRemaining && plasmaFar.hp === 100,
       { directHP: plasmaDirect.hp, nearHP: plasmaNear.hp, farHP: plasmaFar.hp });
 
     fresh();
@@ -187,10 +210,18 @@ async function runChecks(): Promise<void> {
     fresh('expedition', 3); game.boss.spawn(3);
     const closed = game.boss.bodyTarget!;
     aimAt(closed.position); sim.fire('pulse'); updateShots(60);
-    record('Закрытый реактор поглощает реальные снаряды без урона', closed.hp === 820 && game.boss.target === null && sim.projectiles.count === 0,
+    record('Закрытый реактор поглощает реальные снаряды без урона', closed.hp === bossMaxHealth(3) && game.boss.target === null && sim.projectiles.count === 0,
       { hp: closed.hp, shots: sim.projectiles.count, label: closed.label });
     game.selectWeapon('cutter'); game.autoFire = true; step();
     record('Автоогонь сохраняет резак на закрытом реакторе', !game.weapons.cutting && game.weapons.cooldown === 0 && game.boss.active);
+
+    fresh('expedition', 3); game.boss.spawn(3); game.boss.update(7.2, bossContext());
+    const openingArmor = game.boss.bodyTarget!; openingArmor.previousPosition?.copy(openingArmor.position);
+    aimAt(openingArmor.position); sim.fire('plasma'); updateShots(60);
+    game.selectWeapon('cutter'); game.fireInput.press(1); step(); game.fireInput.clear();
+    record('Раскрывающаяся броня всё ещё защищает реактор от плазмы и настоящего луча', game.boss.reactorOpening
+      && game.boss.target === null && openingArmor.hp === bossMaxHealth(3) && game.weapons.cutting,
+      { hp: openingArmor.hp, phase: game.boss.battery.phase, label: openingArmor.label, beam: game.weapons.cutting });
 
     fresh('expedition', 3); game.run.sectorTime = 50; game.run.elapsed = 50;
     const reactor = reachBossOpening();
@@ -208,35 +239,45 @@ async function runChecks(): Promise<void> {
     record('Реактор закрывается после четырёх игровых секунд', !game.boss.reactorOpen && Math.abs(game.run.elapsed - openedAt - BOSS_TIMINGS.exposed) <= DT * 1.01,
       { exposedSeconds: game.run.elapsed - openedAt, phase: game.boss.battery.phase });
 
+    fresh('expedition', 3); game.run.sectorTime = 50; game.run.elapsed = 50;
+    const overload = reachBossOpening(), fullHealth = overload.hp;
+    sim.hitHostile(overload, fullHealth * 100, overload.position);
+    const afterOverload = overload.hp;
+    sim.hitHostile(overload, fullHealth * 100, overload.position);
+    record('Одно окно принимает максимум 37% здоровья и сразу защищается при перегрузке', game.boss.reactorOverloaded
+      && !game.boss.reactorOpen && !game.boss.defeated && overload.hp === afterOverload
+      && Math.abs(fullHealth - afterOverload - fullHealth * BOSS_OPENING_DAMAGE_FRACTION) < 1e-7,
+      { maxHP: fullHealth, hp: overload.hp, phase: game.boss.battery.phase, openings: game.boss.battery.openings });
+
     fresh('expedition', 3); game.run.sectorTime = SECTOR_SECONDS - DT / 2; game.run.elapsed = game.run.sectorTime;
     step(2); const heldSector = game.run.sector; game.nextSector();
     record('Живой босс удерживает переход после 75 с и прямой nextSector', game.run.phase === 'flying' && game.boss.active && game.run.sector === heldSector,
       { sector: game.run.sector, seconds: game.run.sectorTime, phase: game.run.phase });
-    const heldReactor = reachBossOpening(); sim.hitHostile(heldReactor, heldReactor.hp, heldReactor.position); step();
+    const heldOpenings = defeatBoss(); step();
     record('Победа над боссом открывает мастерскую и собирает ровно 100 руды', game.run.phase === 'upgrade' && game.run.bossKills === 1
       && game.run.ore === 100 && game.run.mined === 100 && game.boss.defeated,
-      { phase: game.run.phase, bosses: game.run.bossKills, ore: game.run.ore });
+      { phase: game.run.phase, bosses: game.run.bossKills, ore: game.run.ore, openings: heldOpenings });
 
     fresh('expedition', 3); game.run.sectorTime = 50; game.run.elapsed = 50;
-    const earlyReactor = reachBossOpening(); sim.hitHostile(earlyReactor, earlyReactor.hp, earlyReactor.position);
+    const earlyOpenings = defeatBoss();
     step(120);
     record('Убитый босс не спавнится повторно в том же секторе', game.run.phase === 'flying' && game.boss.defeated && !game.boss.active && game.run.bossKills === 1,
-      { seconds: game.run.sectorTime, bosses: game.run.bossKills, defeated: game.boss.defeated });
+      { seconds: game.run.sectorTime, bosses: game.run.bossKills, defeated: game.boss.defeated, openings: earlyOpenings });
     await progress();
 
     fresh('expedition', 6); game.run.sectorTime = SECTOR_SECONDS - DT / 2; game.run.elapsed = 450;
-    const finalReactor = reachBossOpening(); sim.hitHostile(finalReactor, finalReactor.hp, finalReactor.position); step();
+    const finalOpenings = defeatBoss(); step();
     record('Шестой босс завершает конечную экспедицию настоящей победой', game.run.phase === 'ended' && game.run.won && game.run.sector === 6 && game.run.bossKills === 1,
-      { mode: game.run.mode, phase: game.run.phase, won: game.run.won });
+      { mode: game.run.mode, phase: game.run.phase, won: game.run.won, openings: finalOpenings });
 
     fresh('endless', 6); game.run.sectorTime = SECTOR_SECONDS - DT / 2; game.run.elapsed = 450;
-    const endlessReactor = reachBossOpening(); sim.hitHostile(endlessReactor, endlessReactor.hp, endlessReactor.position); step();
+    const endlessOpenings = defeatBoss(); step();
     const workshopAtSix = game.run.phase === 'upgrade' && !game.run.won;
     game.nextSector(); clearRocks();
     const planet = game.scene.getObjectByName('Планета сектора') as T.Mesh<T.BufferGeometry, T.MeshStandardMaterial>;
     record('Бесконечный режим после шестого сектора реально начинает седьмой мир', workshopAtSix && game.run.phase === 'flying'
       && game.run.sector === 7 && game.run.mode === 'endless' && planet.material.map?.name === sectorVisual(visualSector(7, 'endless')).planet && game.forwardSpeed <= 52,
-      { sector: game.run.sector, world: planet.material.map?.name, speed: game.forwardSpeed });
+      { sector: game.run.sector, world: planet.material.map?.name, speed: game.forwardSpeed, openings: endlessOpenings });
 
     fresh('endless');
     const flyingBlocked = !game.extract(); game.pause(); const pausedBlocked = !game.extract(); game.resume();
@@ -251,13 +292,14 @@ async function runChecks(): Promise<void> {
 
     fresh('endless', 3); syntheticEnemy(4, 0, -45);
     fleetSim.projectiles.fire(new T.Vector3(0, 0, -24), game.ship.root.position, 'fighter', 3);
-    game.boss.spawn(3); game.boss.update(7, bossContext());
+    game.boss.spawn(3); game.boss.update(7.7, bossContext());
     game.weapons.select('cutter'); game.weapons.fire(game.run.fireInterval, true, false, true);
     game.run.ore = 200; game.run.pirateKills = 2; game.run.bossKills = 1;
     game.start('expedition');
     record('Рестарт сбрасывает флот, вражеские выстрелы, босса, оружие и результаты', game.pirates.count === 0 && game.pirates.shotCount === 0
       && !game.boss.active && !game.boss.defeated && game.boss.bodyTarget === null && game.run.pirateKills === 0
       && game.run.bossKills === 0 && game.run.ore === 0 && game.run.mined === 0 && game.weapons.selected === 'pulse'
+      && WEAPON_ORDER.every(id => game.run.unlockedWeapons[id] === (id === 'pulse'))
       && game.weapons.cooldown === 0 && !game.weapons.cutting && game.run.mode === 'expedition' && game.run.sector === 1,
       { pirates: game.pirates.count, shots: game.pirates.shotCount, boss: game.boss.active, mode: game.run.mode, weapon: game.weapons.selected });
     game.returnToMenu();
