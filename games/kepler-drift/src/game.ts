@@ -11,7 +11,7 @@ import { createShip, createRock, rockGeometry } from './models';
 import type { Rock } from './asteroids';
 import { Projectiles } from './projectiles';
 import { CuttingBeam } from './cutting-beam';
-import { WeaponBattery, WEAPONS, cutterRecharge, PLASMA_RADIUS, CUTTER_RANGE } from './weapons';
+import { WeaponBattery, WEAPONS, WEAPON_ORDER, weaponDamage, cutterRecharge, PLASMA_RADIUS, SEEKER_BLAST_RADIUS, CUTTER_RANGE } from './weapons';
 import type { WeaponId } from './weapons';
 import { asteroidKind, blastDamage, blastRadius, flightHint } from './hazards';
 import { AsteroidVisuals } from './asteroid-visuals';
@@ -27,13 +27,13 @@ import { BoostBlurShader } from './boost-blur';
 import { SECTOR_TEXTURE_URLS } from './sectors';
 import { paintLoadingFrame } from './loading';
 import type { LoadingProgress } from './loading';
-import { createRun, clamp, damageShip, collectOre, mulberry32, flightSpeed, SECTOR_SECONDS, TOTAL_SECTORS } from './state';
+import { createRun, buyWeapon, clamp, damageShip, collectOre, mulberry32, flightSpeed, TOTAL_SECTORS } from './state';
 import type { Run } from './state';
 import type { RunMode } from './expedition';
 import { visualSector, shouldSpawnBoss, canAdvanceSector, isExpeditionComplete, canExtract, cappedForwardSpeed, nextSector as nextExpeditionSector } from './expedition';
 import { PirateFleet } from './pirates';
 import type { Pirate } from './pirates';
-import { MiningBoss, BOSS_CUTTER_DPS } from './mining-boss';
+import { MiningBoss } from './mining-boss';
 import type { CombatTarget } from './combat';
 import { createExpeditionProps } from './expedition-props';
 
@@ -88,8 +88,9 @@ export class Game {
   private readonly boostDrive = new BoostDrive();
   get boostTime(): number { return this.boostDrive.remaining; }
   get boostCooldown(): number { return this.boostDrive.cooldown; }
-  private armoryReturn: 'flying' | 'paused' = 'flying';
+  private armoryReturn: 'flying' | 'paused' | 'upgrade' = 'flying';
   get armoryReturnsToPause(): boolean { return this.armoryReturn==='paused'; }
+  get armoryReturnsToUpgrade(): boolean { return this.armoryReturn==='upgrade'; }
   readonly roll = new BarrelRoll();
   private bankAngle = 0;
   readonly fireInput = new PointerFire();
@@ -279,8 +280,8 @@ export class Game {
   resume(): void { if (this.run.phase === 'paused') { this.run.phase = 'flying'; this.audio.start(); this.audio.setFlying(true); this.hooks.phase(this); } }
   togglePause(): void { if(this.run.phase==='armory') this.closeArmory(); else this.run.phase === 'flying' ? this.pause() : this.resume(); }
   openArmory(): void {
-    if(this.run.phase!=='flying' && this.run.phase!=='paused') return;
-    this.armoryReturn=this.run.phase;
+    if(!['flying','paused','upgrade'].includes(this.run.phase)) return;
+    this.armoryReturn=this.run.phase as 'flying' | 'paused' | 'upgrade';
     this.run.phase='armory'; this.keys.clear(); this.touchMove.set(0,0); this.fireInput.clear();
     this.audio.setFlying(false); this.hooks.phase(this);
   }
@@ -292,10 +293,19 @@ export class Game {
   }
   toggleAutoFire(): void { this.autoFire = !this.autoFire; this.hooks.update(this); }
   selectWeapon(id: WeaponId): void {
-    if (!['flying', 'paused'].includes(this.run.phase) || !this.weapons.select(id)) return;
+    if (!['flying', 'paused', 'armory', 'upgrade'].includes(this.run.phase)) return;
+    if (!this.run.unlockedWeapons[id]) {
+      this.openArmory(); this.hooks.toast(`${WEAPONS[id].name} · открытие за ${WEAPONS[id].cost} руды`); return;
+    }
+    if (!this.weapons.select(id)) return;
     this.beam.hide(); this.audio.setCutting(false);
     this.hooks.toast(`${WEAPONS[id].name} · ${WEAPONS[id].description}`);
-    this.hooks.update(this);
+    if (this.run.phase === 'armory') this.hooks.phase(this); else this.hooks.update(this);
+  }
+  unlockWeapon(id: WeaponId): boolean {
+    if (!buyWeapon(this.run, id)) return false;
+    this.weapons.select(id); this.beam.hide(); this.audio.setCutting(false);
+    this.hooks.update(this); return true;
   }
   boost(): void {
     if (this.run.phase !== 'flying' || !this.boostDrive.start()) return;
@@ -331,9 +341,8 @@ export class Game {
       if (e.code === 'Escape' || e.code === 'KeyP') this.togglePause();
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.boost();
       if (e.code === 'KeyQ') this.toggleAutoFire();
-      if (e.code === 'Digit1' || e.code === 'Numpad1') this.selectWeapon('pulse');
-      if (e.code === 'Digit2' || e.code === 'Numpad2') this.selectWeapon('plasma');
-      if (e.code === 'Digit3' || e.code === 'Numpad3') this.selectWeapon('cutter');
+      const weapon = WEAPON_ORDER.find(id => e.code === `Digit${WEAPONS[id].key}` || e.code === `Numpad${WEAPONS[id].key}`);
+      if (weapon) this.selectWeapon(weapon);
       if (e.code === 'KeyU') { this.run.phase==='armory' ? this.closeArmory() : this.openArmory(); }
       if (e.code === 'KeyH') this.hooks.help();
       if (e.code === 'KeyM') this.hooks.sound(this.audio.toggle());
@@ -462,14 +471,15 @@ export class Game {
     this.projectiles.update(dt, this.rocks, this.run.damage, (rock, position, kind) => {
       this.effects.burst(position, kind === 'plasma' ? new T.Color(.5, .7, 2.5) : new T.Color(1.8, .65, .15), 5, 4);
       if (rock.kind === 'volatile' || rock.hp <= 0) this.breakRock(rock);
-    }, position => {
-      this.effects.shockwave(position, PLASMA_RADIUS, 0x977dff);
-      this.effects.burst(position, new T.Color(.6, .4, 2.5), 24, 6);
+    }, (position, kind) => {
+      const missile = kind === 'seeker';
+      this.effects.shockwave(position, missile ? SEEKER_BLAST_RADIUS : PLASMA_RADIUS, missile ? 0x99e5ad : 0xb49cff);
+      this.effects.burst(position, missile ? new T.Color(.7, 2, .9) : new T.Color(1.1, .7, 3), missile ? 12 : 30, missile ? 4 : 8);
     }, () => this.run.hull > 0, {targets:this.combatTargets(),hit:(target,damage,position)=>this.hitHostile(target,damage,position)});
     if (this.run.hull <= 0) { this.finish(false); return; }
     if (this.weapons.cutting) this.beam.update(this.ship.muzzles, this.nearestTarget(), this.rocks,
       (rock, direction) => this.breakRock(rock, direction), () => this.run.hull > 0,
-      {targets:this.combatTargets(),hit:(target,damage,position)=>this.hitHostile(target,damage,position)}, BOSS_CUTTER_DPS*(this.run.damage/14)*dt);
+      {targets:this.combatTargets(),hit:(target,damage,position)=>this.hitHostile(target,damage,position)}, weaponDamage('cutter', this.run.damage)*dt);
     else this.beam.hide();
     if (this.run.hull <= 0) { this.finish(false); return; }
     this.salvage.update(dt, worldSpeed, this.ship.root.position, this.run.magnet, (value, position) => {
@@ -506,9 +516,14 @@ export class Game {
 
   private fire(weapon: WeaponId): void {
     if (weapon === 'cutter') { this.audio.cutter(); return; }
+    const targets: CombatTarget[] = [...this.pirates.targets];
+    if (this.boss.target) targets.push(this.boss.target);
     this.projectiles.fire(this.ship.muzzles, this.nearestTarget(), this.run.multishot,
-      { kind: weapon, damage: this.run.damage * (weapon === 'plasma' ? 2.5 : 1) });
-    if (weapon === 'plasma') this.audio.plasma(); else this.audio.shot();
+      { kind: weapon, damage: weaponDamage(weapon, this.run.damage), targets });
+    if (weapon === 'plasma') this.audio.plasma();
+    else if (weapon === 'scatter') this.audio.tone(840, 130, .12, .05, 'sawtooth');
+    else if (weapon === 'seeker') this.audio.tone(120, 550, .2, .06, 'triangle');
+    else this.audio.shot();
   }
 
   private breakRock(rock: Rock, cutDirection?: T.Vector3): void {
@@ -568,7 +583,7 @@ export class Game {
     if (this.combatTarget?.active) {
       const t=this.combatTarget;
       this.tmp2.copy(t.position); this.tmp2.y+=t.radius+1.6; this.tmp2.project(this.camera);
-      return {x:(this.tmp2.x+1)/2*this.host.clientWidth,y:(1-this.tmp2.y)/2*this.host.clientHeight,health:t.hp/t.maxHp,ore:false,kind:t.kind,label:t.kind==='reactor'?(this.boss.reactorOpen?'РЕАКТОР ОТКРЫТ · РЕЗАК':'БРОНЯ ЗАКРЫТА'):t.label};
+      return {x:(this.tmp2.x+1)/2*this.host.clientWidth,y:(1-this.tmp2.y)/2*this.host.clientHeight,health:t.hp/t.maxHp,ore:false,kind:t.kind,label:t.label};
     }
     if (!this.target) return null;
     this.tmp2.copy(this.target.root.position); this.tmp2.y += this.target.radius + 1.6; this.tmp2.project(this.camera);
@@ -588,6 +603,9 @@ export class Game {
   }
   private hitHostile(target:CombatTarget,damage:number,position:T.Vector3): void {
     if (!target.active || this.run.hull<=0) return;
+    if (target.kind === 'reactor' && !this.boss.reactorOpen) {
+      this.effects.burst(position, new T.Color(.75, .85, 1.1), damage < 5 ? 1 : 3, 2); return;
+    }
     if (target.kind==='reactor') this.boss.hit(target,damage); else this.pirates.hit(target,damage);
     this.effects.burst(position,new T.Color(1.6,.55,.15),damage<5?1:6,3);
   }

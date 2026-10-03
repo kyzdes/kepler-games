@@ -1,8 +1,9 @@
 import type { Game } from '../game';
 import { BOOST_DURATION } from '../boost';
-import { SECTOR_SECONDS, WEAPON_UPGRADES, upgradeCost } from '../state';
+import { SECTOR_SECONDS, WEAPON_UPGRADES, upgradeCost, upgradeMaxed } from '../state';
 import { $, time, setText } from './dom';
-import { CUTTER_DURATION, cutterRecharge } from '../weapons';
+import { CUTTER_DURATION, cutterRecharge, WEAPON_ORDER, WEAPONS } from '../weapons';
+import type { WeaponId } from '../weapons';
 
 export function createFlightHud(toast: (message: string) => void) {
   let lastOre = 0;
@@ -37,6 +38,7 @@ export function createFlightHud(toast: (message: string) => void) {
     setText('boss-health-value',`${Math.ceil(g.boss.health*100)}%`);
     setText('boss-state',g.boss.warning);
     $('boss-hud').classList.toggle('reactor-open',g.boss.reactorOpen);
+    $('boss-hud').classList.toggle('reactor-overloaded',g.boss.reactorOverloaded);
     $('boost-fill').style.transform = `scaleX(${g.boostTime > 0 ? g.boostTime / BOOST_DURATION : 1 - g.boostCooldown / r.boostCooldown})`;
     setText('flight-speed', String(Math.round(g.forwardSpeed)));
     setText('roll-status', g.roll.active ? 'ВРАЩЕНИЕ' : g.roll.cooldown > 0 ? `${g.roll.cooldown.toFixed(1)} С` : 'ГОТОВА');
@@ -46,7 +48,8 @@ export function createFlightHud(toast: (message: string) => void) {
     $('boost-button').classList.toggle('boosting', g.boostTime > 0);
     for (const id of ['boost-button', 'touch-boost'])
       ($(id) as HTMLButtonElement).disabled = g.boostTime > 0 || g.boostCooldown > 0;
-    const affordable = WEAPON_UPGRADES.some(id => !(id === 'multishot' && r.multishot) && r.ore >= upgradeCost(r, id));
+    const affordable = WEAPON_UPGRADES.some(id => !upgradeMaxed(r,id) && r.ore >= upgradeCost(r, id))
+      || WEAPON_ORDER.some(id => !r.unlockedWeapons[id] && r.ore >= WEAPONS[id].cost);
     $('armory-button').classList.toggle('affordable', affordable);
     if (!weaponHintShown && affordable && r.phase === 'flying') {
       weaponHintShown = true;
@@ -58,12 +61,18 @@ export function createFlightHud(toast: (message: string) => void) {
     $('weapon-button').setAttribute('aria-label', g.autoFire ? 'Выключить автоогонь' : 'Включить автоогонь');
     setText('fire-status', g.autoFire ? 'АВТО' : 'РУЧНОЙ');
     document.querySelectorAll<HTMLButtonElement>('[data-weapon-id]').forEach(button => {
-      const selected = button.dataset.weaponId === g.weapons.selected;
+      const id = button.dataset.weaponId as WeaponId, owned = r.unlockedWeapons[id];
+      const selected = owned && id === g.weapons.selected;
       button.classList.toggle('selected', selected);
+      button.classList.toggle('weapon-locked', !owned);
       button.setAttribute('aria-pressed', String(selected));
+      button.setAttribute('aria-label', owned ? `${WEAPONS[id].name} · оружие ${WEAPONS[id].key}` : `${WEAPONS[id].name}: открыть за ${WEAPONS[id].cost} руды`);
+      const status = button.querySelector('.equipment-status');
+      if (!owned && status) status.textContent = `${WEAPONS[id].cost} РУДЫ · U`;
+      else if (id !== 'cutter' && status) status.textContent = id === 'pulse' ? 'ТОЧНЫЙ ОГОНЬ' : id === 'plasma' ? 'ВЗРЫВ 9 М' : id === 'scatter' ? 'ЗАЛП ×8' : 'ЗАХВАТ ЦЕЛИ';
     });
     $('reticle').dataset.weapon = g.weapons.selected;
-    setText('cutter-status', g.weapons.cutting ? `ЛУЧ ${g.weapons.remaining.toFixed(1)} С` : g.weapons.cooldown > 0 ? `ЗАРЯД ${g.weapons.cooldown.toFixed(1)} С` : 'ГОТОВ · 1,8 С');
+    setText('cutter-status', !r.unlockedWeapons.cutter ? `${WEAPONS.cutter.cost} РУДЫ · U` : g.weapons.cutting ? `ЛУЧ ${g.weapons.remaining.toFixed(1)} С` : g.weapons.cooldown > 0 ? `ЗАРЯД ${g.weapons.cooldown.toFixed(1)} С` : 'ГОТОВ · 1,8 С');
     $('select-cutter').classList.toggle('firing', g.weapons.cutting);
     $('select-cutter').classList.toggle('recharging', g.weapons.cooldown > 0);
     $('cutter-fill').style.transform = `scaleX(${g.weapons.cutting ? g.weapons.remaining / CUTTER_DURATION : Math.max(0, 1 - g.weapons.cooldown / cutterRecharge(r.levels.laser))})`;

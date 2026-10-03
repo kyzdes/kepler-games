@@ -1,12 +1,13 @@
 import { $, icon, icons, pad, time, setText } from './ui/dom';
 import { mountApp } from './ui/shell';
 import { createFlightHud } from './ui/hud';
+import { armoryMarkup } from './ui/armory';
 import './style.css';
 import type { Game } from './game';
 import { LoadingScreen } from './loading';
-import { SECTORS, TOTAL_SECTORS, UPGRADES, buyUpgrade, upgradeCost, rollUpgrades, WEAPON_UPGRADES } from './state';
+import { SECTORS, TOTAL_SECTORS, UPGRADES, buyUpgrade, upgradeCost, rollUpgrades, upgradeMaxed } from './state';
 import type { UpgradeId } from './state';
-import { cutterRecharge } from './weapons';
+import { WEAPONS } from './weapons';
 import type { WeaponId } from './weapons';
 import { flightHint } from './hazards';
 import { worldSector, visualSector } from './expedition';
@@ -21,6 +22,8 @@ mountApp();
 let game: Game;
 let offer: UpgradeId[] = [];
 let purchased = new Set<UpgradeId>();
+let shopRun: Game['run'] | null = null;
+let shopSector = 0;
 let toastTimer: ReturnType<typeof setTimeout>;
 let helpOpen = false;
 let resumeAfterHelp = false;
@@ -50,7 +53,10 @@ function phase(g: Game): void {
   if (g.run.phase === 'paused' && !helpOpen) {
     showOverlay(`<section class="pause-panel"><div class="panel-symbol">${icon('pause')}</div><h1>Держим позицию.</h1><p>Космос подождёт.<br/>Экспедиция продолжится с этого места.</p><button id="resume-button" class="primary-button">Продолжить полёт ${icon('play')}</button><button id="restart-button" class="secondary-button">Начать заново ${icon('rotate-ccw')}</button><button id="pause-help" class="text-button">Управление</button></section>`, 'Пауза');
     $('resume-button').onclick = () => g.resume(); $('restart-button').onclick = () => g.start(); $('pause-help').onclick = showHelp;
-  } else if (g.run.phase === 'upgrade') { offer = rollUpgrades(g.run); purchased = new Set(); renderShop(); }
+  } else if (g.run.phase === 'upgrade') {
+    if (shopRun !== g.run || shopSector !== g.run.sector) { offer = rollUpgrades(g.run); purchased = new Set(); shopRun = g.run; shopSector = g.run.sector; }
+    renderShop();
+  }
   else if (g.run.phase === 'armory' && !helpOpen) { armoryFeedback=''; renderArmory(); }
   else if (g.run.phase === 'ended') showEnd();
   else if (!helpOpen) { overlay.hidden = true; overlay.innerHTML = ''; }
@@ -60,48 +66,44 @@ function phase(g: Game): void {
 function renderShop(): void {
   const r = game.run;
   showOverlay(`<section class="shop-panel"><div class="shop-heading"><div><h1>Сектор пройден.</h1><p>Превратите добычу в преимущество перед следующим прыжком.</p></div><div class="shop-balance">${icon('gem')}<strong>${r.ore}</strong><span>ДОСТУПНО РУДЫ</span></div></div><div class="upgrade-grid">${offer.map(id => {
-    const u = UPGRADES[id], cost = upgradeCost(r, id), installed = purchased.has(id), full = id === 'repair' && r.hull === r.maxHull && r.shield === r.maxShield, disabled = installed || full || r.ore < cost;
+    const u = UPGRADES[id], cost = upgradeCost(r, id), installed = purchased.has(id), full = id === 'repair' && r.hull === r.maxHull && r.shield === r.maxShield, disabled = installed || full || upgradeMaxed(r,id) || r.ore < cost;
     return `<article class="upgrade-card ${u.color} ${installed ? 'installed' : ''}"><div class="module-visual">${icon(installed ? 'check' : u.icon)}<span class="module-orbit"></span><span class="module-orbit second"></span></div><h2>${u.name}</h2><div class="module-level">${installed ? 'МОДУЛЬ УСТАНОВЛЕН' : id === 'repair' ? `КОРПУС ${Math.ceil(r.hull)} / 100` : `УРОВЕНЬ ${r.levels[id]} → ${r.levels[id] + 1}`}</div><p>${u.description}</p><button class="upgrade-buy" data-upgrade="${id}" ${disabled ? 'disabled' : ''}>${installed ? `${icon('check')} Установлено` : full ? 'Ремонт не требуется' : r.ore < cost ? `Нужно ещё ${cost - r.ore} руды` : `Установить <span>${icon('gem')} ${cost}</span>`}</button></article>`;
-  }).join('')}</div><div class="shop-footer"><p>${icon('shield')} Щит восстановится при переходе.<br/><span>Руда сохраняется до конца экспедиции.</span></p>${r.mode==='endless'?'<button id="extract-button" class="secondary-button">Эвакуироваться с добычей</button>':''}<button id="next-sector" class="primary-button">В сектор ${r.sector + 1} ${icon('arrow-right')}</button></div></section>`, 'Мастерская корабля');
+  }).join('')}</div><div class="shop-footer"><p>${icon('shield')} Щит восстановится при переходе.<br/><span>Руда сохраняется до конца экспедиции.</span></p><button id="workshop-armory" class="secondary-button">Арсенал · U</button>${r.mode==='endless'?'<button id="extract-button" class="secondary-button">Эвакуироваться с добычей</button>':''}<button id="next-sector" class="primary-button">В сектор ${r.sector + 1} ${icon('arrow-right')}</button></div></section>`, 'Мастерская корабля');
   overlay.querySelectorAll<HTMLButtonElement>('[data-upgrade]').forEach(button => button.onclick = () => {
     const id = button.dataset.upgrade as UpgradeId;
     if (purchased.has(id) || !buyUpgrade(game.run, id)) return;
     purchased.add(id); game.audio.upgrade(); renderShop(); update(game);
   });
   $('next-sector').onclick = () => game.nextSector();
+  $('workshop-armory').onclick = () => game.openArmory();
   if (r.mode==='endless') $('extract-button').onclick=()=>game.extract();
 }
 
 function renderArmory(): void {
-  const r=game.run;
-  const damage=(value:number)=>Number(value.toFixed(1)).toLocaleString('ru-RU');
-  showOverlay(`<section class="shop-panel armory-panel">
-    <div class="shop-heading"><div><h1>Оружие корабля.</h1><p>Улучшайте за собранную руду.<br/>Полёт на паузе.</p></div><div class="shop-balance">${icon('gem')}<strong id="armory-ore">${r.ore}</strong><span>ДОСТУПНО РУДЫ</span></div></div>
-    <div class="upgrade-grid armory-grid">${WEAPON_UPGRADES.map(id=>{
-    const u=UPGRADES[id], cost=upgradeCost(r,id), installed=id==='multishot' && r.multishot;
-      return `<article class="upgrade-card ${u.color} ${installed?'installed':''}">
-        <div class="module-visual">${icon(installed?'check':u.icon)}<span class="module-orbit"></span><span class="module-orbit second"></span></div>
-        <h2>${u.name}</h2><div class="module-level">${id==='laser'?`УРОВЕНЬ ${r.levels.laser} → ${r.levels.laser+1}`:installed?'УСТАНОВЛЕН':'ЗАЛП ×3'}</div>
-        <p>${id==='laser'?`Импульсы: ${damage(r.damage)} → ${damage(r.damage*1.35)} урона. Плазма: ${damage(r.damage*2.5)} → ${damage(r.damage*2.5*1.35)}. Заряд резака: ${damage(cutterRecharge(r.levels.laser))} → ${damage(cutterRecharge(r.levels.laser+1))} с.`:'Три импульса из каждого ствола или три плазменных снаряда. На режущий луч не влияет.'}</p>
-        <div class="armory-price">${installed?'Модуль активен':`${icon('gem')} ${cost} руды`}</div>
-        <button class="upgrade-buy" data-weapon="${id}" ${installed||r.ore<cost?'disabled':''} aria-label="${installed?'Тройной залп установлен':`${id==='laser'?'Улучшить энергоконтур':'Установить тройной залп'} за ${cost} руды`}">${installed?`${icon('check')} Установлено`:r.ore<cost?`Нужно ещё ${cost-r.ore} руды`:`${id==='laser'?'Улучшить энергоконтур':'Установить'} ${icon('arrow-up-right')}`}</button>
-      </article>`;
-    }).join('')}</div>
-    <p class="armory-feedback" role="status" aria-live="polite">${armoryFeedback}</p>
-    <div class="shop-footer"><p>Оборудование сохраняется до конца забега.<br/><span>Остальные системы — в мастерской между секторами.</span></p><button id="close-armory" class="primary-button">${game.armoryReturnsToPause?'К паузе':'К полёту'} ${icon('play')}</button></div>
-  </section>`, 'Улучшение оружия');
-  overlay.querySelectorAll<HTMLButtonElement>('[data-weapon]').forEach(button=>button.onclick=()=>{
-    const id=button.dataset.weapon as 'laser'|'multishot';
-    if(!buyUpgrade(game.run,id)) return;
+  showOverlay(armoryMarkup(game, armoryFeedback), 'Арсенал и улучшение оружия');
+  overlay.querySelectorAll<HTMLButtonElement>('[data-unlock-weapon]').forEach(button => button.onclick = () => {
+    const id = button.dataset.unlockWeapon as WeaponId;
+    if (!game.unlockWeapon(id)) return;
     game.audio.upgrade();
-    armoryFeedback=id==='laser'?`Энергоконтур ${game.run.levels.laser}: снаряды мощнее, резак заряжается быстрее.`:'Тройной залп установлен для импульсов и плазмы.';
+    armoryFeedback = `Оружие установлено: ${WEAPONS[id].name}. Потрачено ${WEAPONS[id].cost} руды.`;
     renderArmory(); update(game);
-    requestAnimationFrame(()=>{
-      const next=overlay.querySelector<HTMLButtonElement>(`[data-weapon="${id}"]:not(:disabled)`);
+    requestAnimationFrame(() => $('close-armory').focus());
+  });
+  overlay.querySelectorAll<HTMLButtonElement>('[data-equip-weapon]').forEach(button => button.onclick = () => {
+    game.selectWeapon(button.dataset.equipWeapon as WeaponId);
+  });
+  overlay.querySelectorAll<HTMLButtonElement>('[data-weapon]').forEach(button => button.onclick = () => {
+    const id = button.dataset.weapon as 'laser' | 'multishot';
+    if (!buyUpgrade(game.run,id)) return;
+    game.audio.upgrade();
+    armoryFeedback = id === 'laser' ? `Энергоконтур ${game.run.levels.laser}: весь арсенал мощнее, резак заряжается быстрее.` : 'Тройной залп установлен для импульсов и плазмы.';
+    renderArmory(); update(game);
+    requestAnimationFrame(() => {
+      const next = overlay.querySelector<HTMLButtonElement>(`[data-weapon="${id}"]:not(:disabled)`);
       (next ?? $('close-armory')).focus();
     });
   });
-  $('close-armory').onclick=()=>game.closeArmory();
+  $('close-armory').onclick = () => game.closeArmory();
 }
 
 function showEnd(): void {
@@ -118,11 +120,11 @@ function showHelp(): void {
   showOverlay(`<section class="help-panel">
     <button id="close-help" class="icon-button close-button" aria-label="Закрыть управление">${icon('x')}</button>
     <h1>Ваш первый полёт.</h1>
-    <p>Экспедиция из шести секторов или бесконечный «Глубокий дрейф», три вида оружия. Разбивайте золотые астероиды и тратьте руду на улучшения. Красные камни взрываются от любого попадания: рядом с кораблём лучше уклониться. Синие бронекамни прочнее обычных — прорезайте их лучом. Пираты стреляют очередями, снайпер заранее обозначает линию: уходите в сторону или прячьтесь за камнем. Красные астероиды могут уничтожить и врагов.</p>
+    <p>Экспедиция из шести секторов или бесконечный «Глубокий дрейф», пять видов оружия. Импульсы доступны сразу; четыре других открываются за руду в арсенале U. Разбивайте золотые астероиды и тратьте руду на улучшения. Красные камни взрываются от любого попадания: рядом с кораблём лучше уклониться. Синие бронекамни прочнее обычных — прорезайте их лучом. Пираты стреляют очередями, снайпер заранее обозначает линию: уходите в сторону или прячьтесь за камнем. Красные астероиды могут уничтожить и врагов.</p>
     <dl class="control-list">
       <div><dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>или стрелки</span></dt><dd>Маневрировать</dd></div>
       <div><dt>${icon('mouse')}<span>Мышь</span></dt><dd>Наводить прицел</dd></div>
-      <div><dt><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></dt><dd>Импульсы / плазма / резак</dd></div>
+      <div><dt><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>5</kbd></dt><dd>Импульсы / плазма / картечь / ракеты / резак</dd></div>
       <div><dt><kbd>ЛКМ</kbd></dt><dd>Огонь выбранным оружием</dd></div>
       <div><dt><kbd>A / D</kbd><span>+</span><kbd>ПРОБЕЛ</kbd></dt><dd>Бочка в сторону манёвра</dd></div>
       <div><dt><kbd>SHIFT</kbd></dt><dd>Форсаж 6 секунд · защита в начале</dd></div>
@@ -130,7 +132,7 @@ function showHelp(): void {
       <div><dt><kbd>Q</kbd></dt><dd>Автоогонь · включён при старте</dd></div>
       <div><dt><kbd>ESC</kbd><span>/</span><kbd>M</kbd></dt><dd>Пауза / звук</dd></div>
     </dl>
-    <p class="help-footnote">Резак проходит сквозь любые астероиды в прицеле: 1,8 секунды работы, 12 секунд перезарядки. С автоогнём луч включается, когда в прицеле есть цель. Плазма взрывается в радиусе 7 м и может задеть красный камень. У добывающего корабля стреляйте в реактор, когда заслонки открыты. В глубоком дрейфе можно эвакуироваться с добычей из мастерской после любого сектора. На телефоне переключайте оружие кнопками над джойстиком. Щит восстанавливается через 5 секунд без урона; магнит собирает руду автоматически.</p>
+    <p class="help-footnote">Резак проходит сквозь любые астероиды в прицеле: 1,8 секунды работы, 12 секунд перезарядки. С автоогнём луч включается, когда в прицеле есть цель. Плазма взрывается в радиусе 9 м и может задеть красный камень. У добывающего корабля стреляйте в синее ядро после полного открытия заслонок. Перегрузка закрывает реактор; бой требует нескольких окон атаки. В глубоком дрейфе можно эвакуироваться с добычей из мастерской после любого сектора. Щит восстанавливается через 5 секунд без урона; магнит собирает руду автоматически.</p>
     <button id="help-done" class="primary-button">Всё понятно ${icon('arrow-right')}</button>
   </section>`, 'Управление');
   const close = () => { helpOpen = false; if (resumeAfterHelp) game.resume(); else if (game.run.phase === 'upgrade') renderShop(); else if(game.run.phase==='armory') renderArmory(); else phase(game); };
@@ -195,6 +197,10 @@ async function boot(): Promise<void> {
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('sector-preview')) {
       const { previewSector } = await import('../tests/sector-preview');
       previewSector(game);
+    }
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('arsenal-preview')) {
+      const { previewArsenal } = await import('../tests/arsenal-preview');
+      previewArsenal(game);
     }
   } catch (error) {
     console.error('Unable to start Kepler Drift', error);

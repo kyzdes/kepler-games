@@ -2,7 +2,9 @@ import * as T from 'three';
 import { Game } from '../src/game';
 import type { Projectiles } from '../src/projectiles';
 import type { Salvage } from '../src/salvage';
+import type { CombatTarget } from '../src/combat';
 import { asteroidOre, buyUpgrade, flightSpeed, mulberry32, SECTOR_SECONDS, TOTAL_SECTORS } from '../src/state';
+import { WEAPON_ORDER } from '../src/weapons';
 import type { WeaponId } from '../src/weapons';
 import { PlanetStorm } from '../src/storm';
 import { StableFlightCamera } from '../src/camera';
@@ -23,12 +25,18 @@ const sim = game as unknown as {
   projectiles: Projectiles; salvage: Salvage;
   invulnerable: number; rng: () => number;
   frame(): void; lastFrame: number; fire(weapon:WeaponId):void;
+  hitHostile(target:CombatTarget,damage:number,position:T.Vector3):void;
 };
 const step = (frames = 1) => {
   for (let i = 0; i < frames && game.run.phase === 'flying'; i++) sim.tickFlight(1 / 60);
 };
 const clearRocks = () => game.rocks.forEach(r => { r.wait = 999; r.root.visible = false; });
-const fresh = () => { game.start(); game.autoFire = false; clearRocks(); };
+const fresh = (syntheticUnlocks:readonly WeaponId[] = []) => {
+  game.start(); game.autoFire = false; clearRocks();
+  // Only combat-specific cases grant their requested gun. Ordinary flight,
+  // restart and seeded pilot samples retain the real pulse-only start.
+  for (const weapon of syntheticUnlocks) game.run.unlockedWeapons[weapon] = true;
+};
 const key = (code: string, type = 'keydown', repeat = false) => game.renderer.domElement.dispatchEvent(new KeyboardEvent(type, {code, repeat, bubbles:true}));
 const placeHit = () => {
   const rock = game.rocks[0]; rock.radius = .5; rock.wait = 0; rock.root.visible = true;
@@ -46,7 +54,8 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
   const checks: {name:string; passed:boolean; details?:unknown}[] = [];
   const record = (name:string, passed:boolean, details?:unknown) => checks.push({name, passed, details});
   game.start(); clearRocks(); step();
-  record('Старт включает автоогонь и выпускает снаряды', game.autoFire && sim.projectiles.count > 0);
+  record('Старт включает автоогонь и выпускает снаряды', game.autoFire && sim.projectiles.count > 0
+    && WEAPON_ORDER.every(id => game.run.unlockedWeapons[id] === (id === 'pulse')));
   key('KeyQ'); key('KeyQ','keyup');
   record('Q отключает автоогонь', !game.autoFire);
   game.start(); clearRocks();
@@ -107,7 +116,8 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
   });
   fresh();
   // This clock/map scenario isolates progression. Combat has its own encounter
-  // probe; real boss hit() still resolves the required victory gate here.
+  // probe. Overpowered synthetic damage goes through real Game.hitHostile in
+  // three exposed windows; no boss phase or defeat state is forced.
   sim.invulnerable=10000;
   const journey=[];
   for(let sector=1;sector<=TOTAL_SECTORS;sector++) {
@@ -115,12 +125,14 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
     const correctMaps=maps().join(',')===[visual.planet,visual.sky].join(',');
     for(let frame=0;frame<SECTOR_SECONDS*60+1 && game.run.phase==='flying';frame++) {
       step();
-      if(game.boss.target) game.boss.hit(game.boss.target,game.boss.target.hp);
+      if(game.boss.target) sim.hitHostile(game.boss.target,game.boss.target.hp,game.boss.target.position);
     }
-    journey.push({sector,seconds:game.run.sectorTime,phase:game.run.phase,correctMaps});
+    journey.push({sector,seconds:game.run.sectorTime,phase:game.run.phase,correctMaps,bossOpenings:game.boss.battery.openings});
     if(sector<TOTAL_SECTORS) game.nextSector();
   }
-  record('Синтетический маршрут: после победы над боссами шесть секторов завершаются за 75 секунд каждый', journey.every((j,i)=>Math.abs(j.seconds-75)<.02 && j.phase===(i<TOTAL_SECTORS-1?'upgrade':'ended')) && Math.abs(game.run.elapsed-SECTOR_SECONDS*TOTAL_SECTORS)<.12 && game.run.won, journey);
+  record('Синтетический маршрут: боссы требуют три окна, шесть секторов завершаются за 75 секунд каждый', journey.every((j,i)=>Math.abs(j.seconds-75)<.02
+    && j.phase===(i<TOTAL_SECTORS-1?'upgrade':'ended') && (j.sector%3!==0 || j.bossOpenings===3))
+    && Math.abs(game.run.elapsed-SECTOR_SECONDS*TOTAL_SECTORS)<.12 && game.run.won, journey);
   record('Переходы реально меняют текстуры планеты и галактики', journey.every(j=>j.correctMaps));
   game.start();
   record('Новый забег возвращает текстуры первого сектора', maps().join(',')===[sectorVisual(1).planet,sectorVisual(1).sky].join(','));
@@ -168,10 +180,18 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
   record('Улучшенное оружие выпускает по три луча из каждого ствола', game.run.phase==='flying' && game.run.multishot && sim.projectiles.count===game.ship.muzzles.length*3);
   game.pause(); game.openArmory(); game.closeArmory();
   record('Оружейная, открытая из паузы, возвращает на паузу', game.run.phase==='paused');
-  game.start(); record('Новая экспедиция сбрасывает форсаж и купленное оружие', game.boostTime===0 && game.boostCooldown===0 && game.run.levels.laser===1 && !game.run.multishot);
-  fresh(); key('Digit2'); key('Digit2','keyup'); game.autoFire=true; step();
+  game.start(); record('Новая экспедиция сбрасывает форсаж и купленное оружие', game.boostTime===0 && game.boostCooldown===0 && game.run.levels.laser===1
+    && !game.run.multishot && WEAPON_ORDER.every(id => game.run.unlockedWeapons[id] === (id === 'pulse')));
+  fresh(); key('Digit5'); key('Digit5','keyup');
+  record('Клавиша закрытого резака открывает оружейную, сохраняя импульсы', game.run.phase==='armory'
+    && game.weapons.selected==='pulse' && !game.run.unlockedWeapons.cutter && !game.weapons.cutting);
+  fresh(['plasma']); key('Digit2'); key('Digit2','keyup'); game.autoFire=true; step();
   record('Клавиша 2 меняет оружие в полёте и автоогонь выпускает плазму', game.run.phase==='flying' && game.weapons.selected==='plasma' && sim.projectiles.count===1);
-  fresh(); key('Digit3'); key('Digit3','keyup'); game.autoFire=true; step(20);
+  fresh(['scatter']); key('Digit3'); key('Digit3','keyup'); game.autoFire=true; step();
+  record('Открытая картечь выбирается клавишей 3 и выпускает восемь зарядов', game.run.phase==='flying' && game.weapons.selected==='scatter' && sim.projectiles.count===8);
+  fresh(['seeker']); key('Digit4'); key('Digit4','keyup'); game.autoFire=true; step();
+  record('Открытые ракеты выбираются клавишей 4 и запускаются парой', game.run.phase==='flying' && game.weapons.selected==='seeker' && sim.projectiles.count===2);
+  fresh(['cutter']); key('Digit5'); key('Digit5','keyup'); game.autoFire=true; step(20);
   record('Автоогонь не тратит заряд резака на пустой прицел', game.weapons.selected==='cutter' && !game.weapons.cutting && game.weapons.cooldown===0);
   for(const [i,z,kind] of [[0,-30,'normal'],[1,-60,'armored'],[2,-100,'volatile']] as const) {
     const rock=game.rocks[i]; rock.wait=0; rock.radius=3; rock.kind=kind; rock.hp=999; rock.maxHp=999;
@@ -225,7 +245,9 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
     samples.push({seed, phase:game.run.phase, kills:game.run.kills, ore:game.run.mined, hull:game.run.hull});
   }
   game.pause(); render();
-  result.textContent = JSON.stringify({passed:checks.every(c=>c.passed), checks, stationaryAimSamples:samples},null,2);
+  result.textContent = JSON.stringify({passed:checks.every(c=>c.passed), checks, stationaryAimSamples:samples,
+    assumptions:{combatUnlocks:'requested weapons explicitly unlocked only for isolated combat cases',
+      journey:'invulnerable clock/map fixture with real three-window boss gates and synthetic Game.hitHostile damage',balanceClaim:false}},null,2);
 };
 function preview(direction:number):void {
   fresh();
