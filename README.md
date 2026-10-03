@@ -6,7 +6,7 @@
 
 | Игра | Что внутри | Играть | Исходники |
 | --- | --- | --- | --- |
-| **Кеплер: Дрейф** | Космический roguelike: астероиды, добыча руды, улучшения оружия, бочки и форсаж. Три сектора. | [asteroid.moone.dev](https://asteroid.moone.dev/) | [games/kepler-drift](games/kepler-drift/) |
+| **Кеплер: Дрейф** | Космический roguelike: шесть секторов, пираты и боссы, пять оружий с покупками за руду, бочки, форсаж и бесконечный дрейф. | [asteroid.moone.dev](https://asteroid.moone.dev/) | [games/kepler-drift](games/kepler-drift/) |
 | **Кеплер: Апекс** | Орбитальная гонка: три круга, пять соперников, заносы, ускорители и личные рекорды. | [racing.moone.dev](https://racing.moone.dev/) | [games/kepler-apex](games/kepler-apex/) |
 
 ## Запуск
@@ -60,7 +60,7 @@ npm run build
 npm run preview
 ```
 
-Готовый сайт находится в `dist/`. У каждой игры собственный `package-lock.json`. Автоматические проверки: 39 тестов «Дрейфа», 26 тестов «Апекса» и обе production-сборки. GitHub Actions повторяет тесты и сборку для каждой игры на push и pull request.
+Готовый сайт находится в `dist/`. У каждой игры собственный `package-lock.json`, модульные тесты и production-сборка. GitHub Actions повторяет тесты и сборку для каждой игры на push и pull request. Текущие результаты проверок «Дрейфа» описаны в его README.
 
 ## Структура
 
