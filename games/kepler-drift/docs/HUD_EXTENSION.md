@@ -8,7 +8,7 @@ This records the implemented equipment extension in Kepler Drift. It describes t
 - Ore and purchase feedback use gold; shields use ice blue; hull status and the ship retain the orange and white vocabulary.
 - Flight information stays at the edges: sector information at the upper left, ship status at the lower left, radar at the lower right, equipment centered below the ship.
 - Button focus uses the incumbent ice-blue outline (2px with a 5px offset). Lucide icons retain a 1.5px stroke. HUD numbers use tabular figures where they change during flight.
-- The existing scene remains the primary visual content. This HUD extension does not establish a replacement world or new camera behavior.
+- The existing scene remains the primary visual content. The arsenal extension retains the established camera; the separate free-flight extension below adds its own cockpit and chase views.
 
 ## Weapon choices
 
@@ -51,3 +51,11 @@ The source of truth is `src/style.css` for visual states and breakpoints, `src/u
 ## Local finish evidence — 3 October 2026
 
 Independent desktop finish disposition: `ship`, based on shop captures at 1440×900 and 1280×800, owned state and flight HUD. Native UI actions with staged ore debit 90/140/220/320 exactly, switch all five guns, preserve pause/workshop return and enforce the energy cap. The build and 115 unit tests pass; Comet probes pass 28 combat, 55 flight and 12 collision cases. The GPU probe reads 900 frames without brightness drops or GL errors. These are bounded integration receipts, not human balance or physical smartphone evidence; publication is verified separately. No new shipping raster or design authority was introduced.
+
+## Free-flight extension — 4 October 2026
+
+The ready menu adds a third native mode button and a mode-specific launch label. Free flight inherits the same type, pale/cyan instrument palette, gold ore grammar and weapon bay. A header button toggles cockpit/chase view with C. Thrust and the current mined-ore contract sit below the route display. The gun reticle stays centred while a small pointer marker shows turn input.
+
+The cockpit is actual Three.js geometry: narrow canopy supports leave the upper/central view open; three CanvasTexture instruments show measured speed/thrust, shield/hull and ore. The navigation camera excludes the model's decorative bank and barrel roll. In flight, compact weapon buttons sit above the console; shield/hull and radar move clear of the lower instruments. These cockpit selectors exclude the ready phase so the equipment row cannot cross mode selection or the launch button. Chase view retains the established external HUD.
+
+Desktop captures cover cockpit at 1440×900 and 1280×800, chase at 1440×900, the selected ready menu at 1280×800, and the current ordinary Comet window at 1424×721. Earlier evidence used a 1424×762 ordinary window; its current height changed and the latest capture records the actual viewport. Independent finish review resolved the menu overlap and proof receipt findings with disposition `ship`. No mobile work, new raster asset or design-authority repair is part of this extension. Runtime scenarios and explicit limitations are recorded in [FREE_FLIGHT.md](FREE_FLIGHT.md); visual stills alone do not verify motion or progression.

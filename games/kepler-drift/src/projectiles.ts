@@ -15,6 +15,8 @@ export interface ShotOptions {
   damage: number;
   /** Only exposed reactors belong here; the collision list may also include closed armour. */
   targets?: readonly CombatTarget[];
+  /** Basis of the cannons; omitted for the original forward corridor. */
+  heading?: T.Quaternion;
 }
 
 interface Projectile {
@@ -63,6 +65,9 @@ export class Projectiles {
   private readonly direction = new T.Vector3();
   private readonly desired = new T.Vector3();
   private readonly turnAxis = new T.Vector3();
+  private readonly right = new T.Vector3();
+  private readonly up = new T.Vector3();
+  private readonly flightForward = new T.Vector3();
   private frameFraction = 1;
 
   constructor(scene: T.Scene) { this.scene = scene; }
@@ -72,6 +77,10 @@ export class Projectiles {
   fire(muzzles: readonly T.Object3D[], aim: T.Vector3, multishot: boolean, options?: ShotOptions): void {
     if (!muzzles.length) return;
     const kind = options?.kind ?? 'pulse';
+    this.right.set(1, 0, 0); this.up.copy(UP); this.flightForward.copy(FORWARD);
+    if (options?.heading) {
+      this.right.applyQuaternion(options.heading); this.up.applyQuaternion(options.heading); this.flightForward.applyQuaternion(options.heading);
+    }
     if (kind === 'scatter') {
       const barrels = Math.min(2, muzzles.length);
       for (let pellet = 0; pellet < SCATTER_PELLETS; pellet++) {
@@ -79,8 +88,8 @@ export class Projectiles {
         // Four lanes per cannon form a useful close-range cone, regardless of multishot.
         const lane = Math.floor(pellet / barrels) % SCATTER_SPREAD.length;
         this.aimDirection(aim);
-        this.direction.x += SCATTER_SPREAD[lane];
-        this.direction.y += (pellet % 2 ? 1 : -1) * .018;
+        this.direction.addScaledVector(this.right, SCATTER_SPREAD[lane]);
+        this.direction.addScaledVector(this.up, (pellet % 2 ? 1 : -1) * .018);
         this.direction.normalize();
         this.launch(kind, options, null);
       }
@@ -90,8 +99,7 @@ export class Projectiles {
       for (let missile = 0; missile < 2; missile++) {
         muzzles[missile % muzzles.length].getWorldPosition(this.start);
         this.aimDirection(aim);
-        // The game advances along -Z. A lock never sends a missile back at the ship.
-        if (this.direction.z >= -.05) this.direction.copy(FORWARD);
+        if (this.direction.dot(this.flightForward) <= .05) this.direction.copy(this.flightForward);
         const target = this.findLock(options?.targets ?? [], this.start, this.direction);
         this.launch(kind, options, target);
       }
@@ -108,7 +116,7 @@ export class Projectiles {
       const spreads = multishot ? (kind === 'plasma' ? [-.055, 0, .055] : [-.032, 0, .032]) : [0];
       for (const spread of spreads) {
         this.aimDirection(aim);
-        this.direction.x += spread;
+        this.direction.addScaledVector(this.right, spread);
         this.direction.normalize();
         this.launch(kind, options, null);
       }
@@ -227,10 +235,10 @@ export class Projectiles {
   private findLock(targets: readonly CombatTarget[], origin: T.Vector3, forward: T.Vector3): CombatTarget | null {
     let best: CombatTarget | null = null, bestScore = Infinity;
     for (const target of targets) {
-      if (!target.active || target.hp <= 0 || target.position.z >= origin.z - 1) continue;
+      if (!target.active || target.hp <= 0) continue;
       this.desired.copy(target.position).sub(origin);
       const distance = this.desired.length();
-      if (distance > SHOT_RANGE.seeker || distance < 1e-9) continue;
+      if (distance > SHOT_RANGE.seeker || distance < 1 || this.desired.dot(forward) <= 1) continue;
       const alignment = this.desired.multiplyScalar(1 / distance).dot(forward);
       if (alignment < .55) continue;
       // Ships win over a reactor fallback even when the larger reactor is nearer.
@@ -244,7 +252,7 @@ export class Projectiles {
     const target = shot.target;
     if (!target) return;
     this.desired.copy(target.position).sub(shot.mesh.position);
-    if (!target.active || target.hp <= 0 || this.desired.z >= -.05 || this.desired.lengthSq() < 1e-12) {
+    if (!target.active || target.hp <= 0 || this.desired.lengthSq() < 1e-12) {
       shot.target = null;
       return;
     }

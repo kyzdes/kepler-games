@@ -1,4 +1,5 @@
 import type { Game } from '../game';
+import { Vector3 } from 'three';
 import { BOOST_DURATION } from '../boost';
 import { SECTOR_SECONDS, WEAPON_UPGRADES, upgradeCost, upgradeMaxed } from '../state';
 import { $, time, setText } from './dom';
@@ -10,8 +11,19 @@ export function createFlightHud(toast: (message: string) => void) {
   let gainTimer: ReturnType<typeof setTimeout>;
   let weaponHintShown = false;
   const radarContext = ($('radar') as HTMLCanvasElement).getContext('2d')!;
+  const scannerPoint=new Vector3();
   function update(g: Game): void {
     const r = g.run;
+    const free=r.mode==='freeflight';
+    document.querySelector<HTMLElement>('.game-app')!.dataset.view=free?g.flightView:'chase';
+    $('free-instruments').hidden=!free || r.phase==='ready';
+    $('steering-cursor').hidden=!free || r.phase!=='flying';
+    $('steering-cursor').style.left=`${(g.pointer.x+1)*50}%`;
+    $('steering-cursor').style.top=`${(1-g.pointer.y)*50}%`;
+    setText('view-label',g.flightView==='cockpit'?'КАБИНА':'СЗАДИ');
+    setText('throttle-value',`${Math.round(g.freeFlight.throttle*100)}%`);
+    setText('mining-contract',`КОНТРАКТ · ${Math.min(g.freeMiningQuota,g.freeMiningProgress)} / ${g.freeMiningQuota} РУДЫ`);
+    setText('radar-range',free?'220 М':'120 М');
     setText('ore-value', r.ore.toLocaleString('ru-RU'));
     if (r.ore > lastOre && r.phase === 'flying') {
       $('ore-gain').textContent = `+${r.ore - lastOre}`;
@@ -27,8 +39,8 @@ export function createFlightHud(toast: (message: string) => void) {
     $('shield-fill').style.transform = `scaleX(${r.shield / r.maxShield})`;
     $('hull-fill').style.transform = `scaleX(${r.hull / 100})`;
     $('hull-fill').classList.toggle('critical', r.hull < 30);
-    $('sector-progress').style.transform = `scaleX(${Math.min(1,r.sectorTime / SECTOR_SECONDS)})`;
-    setText('flight-limit',r.mode==='endless'?'БЕЗ ПРЕДЕЛА':'6 СЕКТОРОВ');
+    $('sector-progress').style.transform = `scaleX(${Math.min(1,free?g.freeMiningProgress/g.freeMiningQuota:r.sectorTime / SECTOR_SECONDS)})`;
+    setText('flight-limit',free?'СВОБОДНЫЙ КУРС':r.mode==='endless'?'БЕЗ ПРЕДЕЛА':'6 СЕКТОРОВ');
     const hostileCount=g.pirates.enemies.filter(enemy=>enemy.active).length;
     $('encounter-info').hidden=hostileCount===0 || g.boss.active;
     setText('encounter-info',`${hostileCount} ${hostileCount===1?'ПИРАТ':hostileCount<5?'ПИРАТА':'ПИРАТОВ'} В ПОЯСЕ · КАМНИ ДАЮТ УКРЫТИЕ`);
@@ -81,8 +93,8 @@ export function createFlightHud(toast: (message: string) => void) {
     for (const id of ['laser', 'engine', 'magnet'] as const)
       setText(`${id}-level`, numerals[r.levels[id]] || String(r.levels[id]));
     $('damage-flash').style.opacity = String(g.damageFlash * .48);
-    $('reticle').style.left = `${(g.pointer.x + 1) * 50}%`;
-    $('reticle').style.top = `${(1 - g.pointer.y) * 50}%`;
+    $('reticle').style.left = `${free?50:(g.pointer.x + 1) * 50}%`;
+    $('reticle').style.top = `${free?50:(1 - g.pointer.y) * 50}%`;
     $('reticle').classList.toggle('locked', !!g.target || !!g.combatTarget);
     const target = g.targetScreen();
     $('target-info').hidden = !target;
@@ -124,13 +136,17 @@ export function createFlightHud(toast: (message: string) => void) {
     ctx.stroke();
     ctx.setLineDash([]);
     for (const rock of g.rocks) {
-      if (rock.wait > 0 || rock.root.position.z < -120 || rock.root.position.z > 12)
+      const free=g.run.mode==='freeflight';
+      if (rock.wait > 0 || (!free && (rock.root.position.z < -120 || rock.root.position.z > 12)))
         continue;
-      const x = (rock.root.position.x - g.ship.root.position.x) * 3.5, y = rock.root.position.z * 1.02 + 50;
+      g.navigationPoint(rock.root.position,scannerPoint);
+      if(free && scannerPoint.length()>220) continue;
+      const x = free?scannerPoint.x*.6:(rock.root.position.x - g.ship.root.position.x) * 3.5;
+      const y = free?scannerPoint.z*.6:rock.root.position.z * 1.02 + 50;
       if (Math.hypot(x, y) > 132)
         continue;
       ctx.fillStyle = rock.kind === 'volatile' ? '#ff765e' : rock.kind === 'armored' ? '#91bfff' : rock.ore ? '#eab66e' : '#738995';
-      ctx.globalAlpha = .45 + (1 + rock.root.position.z / 120) * .5;
+      ctx.globalAlpha = free?.45+.5*(1-scannerPoint.length()/220):.45 + (1 + rock.root.position.z / 120) * .5;
       ctx.beginPath();
       ctx.arc(x, y, rock.radius > 3 ? 4.5 : 3, 0, Math.PI * 2);
       ctx.fill();
@@ -148,10 +164,11 @@ export function createFlightHud(toast: (message: string) => void) {
     }
     ctx.fillStyle = '#d2efff';
     ctx.beginPath();
-    ctx.moveTo(0, 38);
-    ctx.lineTo(-7, 59);
-    ctx.lineTo(0, 54);
-    ctx.lineTo(7, 59);
+    const shipY=g.run.mode==='freeflight'?-12:38;
+    ctx.moveTo(0, shipY);
+    ctx.lineTo(-7, shipY+21);
+    ctx.lineTo(0, shipY+16);
+    ctx.lineTo(7, shipY+21);
     ctx.closePath();
     ctx.fill();
     ctx.restore();

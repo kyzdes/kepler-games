@@ -30,7 +30,10 @@ import type { LoadingProgress } from './loading';
 import { createRun, buyWeapon, clamp, damageShip, collectOre, mulberry32, flightSpeed, TOTAL_SECTORS } from './state';
 import type { Run } from './state';
 import type { RunMode } from './expedition';
-import { visualSector, shouldSpawnBoss, canAdvanceSector, isExpeditionComplete, canExtract, cappedForwardSpeed, nextSector as nextExpeditionSector } from './expedition';
+import { visualSector, shouldSpawnBoss, canAdvanceSector, isExpeditionComplete, canExtract, cappedForwardSpeed, freeFlightQuota, nextSector as nextExpeditionSector } from './expedition';
+import { FreeFlight } from './free-flight.ts';
+import type { FlightView } from './free-flight.ts';
+import { createCockpit } from './cockpit.ts';
 import { PirateFleet } from './pirates';
 import type { Pirate } from './pirates';
 import { MiningBoss } from './mining-boss';
@@ -96,9 +99,20 @@ export class Game {
   readonly fireInput = new PointerFire();
   get shooting(): boolean { return this.fireInput.active; }
   private readonly cameraRig = new StableFlightCamera();
+  readonly freeFlight = new FreeFlight();
+  flightView: FlightView = 'cockpit';
+  private readonly cockpit = createCockpit();
+  private distantRocks: T.InstancedMesh | null = null;
+  private freeSectorMined = 0;
+  private readonly centeredAim = new T.Vector2();
+  private readonly cosmeticRoll = new T.Quaternion();
+  private readonly rollAxis = new T.Vector3(0, 0, 1);
+  private readonly navigationInverse = new T.Quaternion();
   private flightY = 0;
   autoFire = true;
-  get forwardSpeed(): number { return (this.run.mode==='endless'?cappedForwardSpeed(this.run.sector,this.run.sectorTime):flightSpeed(this.run.sector, this.run.sectorTime)) * (this.boostTime > 0 ? BOOST_FORWARD_MULTIPLIER : 1); }
+  get forwardSpeed(): number { return this.run.mode==='freeflight' ? this.freeFlight.speed : (this.run.mode==='endless'?cappedForwardSpeed(this.run.sector,this.run.sectorTime):flightSpeed(this.run.sector, this.run.sectorTime)) * (this.boostTime > 0 ? BOOST_FORWARD_MULTIPLIER : 1); }
+  get freeMiningProgress(): number { return Math.max(0, this.run.mined - this.freeSectorMined); }
+  get freeMiningQuota(): number { return freeFlightQuota(this.run.sector); }
   target: Rock | null = null;
   loaded = false;
   fps = 60;
@@ -124,6 +138,7 @@ export class Game {
     this.composer.addPass(new OutputPass());
     this.composer.addPass(this.antialiasPass);
     this.scene.add(this.ship.root);
+    this.camera.add(this.cockpit.root); this.scene.add(this.camera); this.cockpit.root.visible=false;
     this.camera.position.set(0, 4, 18.2);
     this.camera.lookAt(0, 1.5, -35);
     this.effects = new FlightEffects(this.scene, () => this.rng());
@@ -200,7 +215,7 @@ export class Game {
       d.position.set((rng() - .5) * 1100, (rng() - .5) * 460, -250 - rng() * 650);
       d.scale.setScalar(1 + rng() * 5); d.rotation.set(rng() * 6, rng() * 6, rng() * 6); d.updateMatrix(); distant.setMatrixAt(i, d.matrix);
     }
-    this.scene.add(distant);
+    this.distantRocks=distant; this.scene.add(distant);
     onProgress({ percent:78, stage:2, label:'Запускаем системы корабля' });
     await paintLoadingFrame();
     for (let i=0;i<loadedTextures.length;i++) {
@@ -209,6 +224,9 @@ export class Game {
       await paintLoadingFrame();
     }
     await this.renderer.compileAsync(this.scene, this.camera);
+    this.cockpit.root.visible=true;
+    await this.renderer.compileAsync(this.scene,this.camera);
+    this.cockpit.root.visible=false;
     this.cosmos?.setSector(2);
     await this.renderer.compileAsync(this.scene, this.camera);
     this.cosmos?.setSector(1);
@@ -232,6 +250,15 @@ export class Game {
     if (initial && i === 2) rock.root.position.set(-10, -1, -42);
     if (initial && i === 3) rock.root.position.set(-16, 1, -12);
     if (initial && i === 4) rock.root.position.set(17, -5, -16);
+    if (this.run.mode==='freeflight') {
+      const distance=(initial?40:100)+this.rng()*150;
+      const azimuth=this.rng()*Math.PI*2, vertical=this.rng()*2-1;
+      const horizontal=Math.sqrt(1-vertical*vertical);
+      rock.root.position.set(Math.cos(azimuth)*horizontal,vertical,Math.sin(azimuth)*horizontal).multiplyScalar(distance);
+      if (initial && i<5) rock.root.position.set((i%3-1)*13,(i%2)*7-3,-42-i*19);
+      if(initial && i===0) rock.root.position.set(0,.9,-48);
+      rock.root.position.applyQuaternion(this.freeFlight.heading).add(this.freeFlight.position);
+    }
     rock.root.rotation.set(this.rng() * 6, this.rng() * 6, this.rng() * 6);
     rock.kind = asteroidKind(this.run.sector, this.rng());
     if (this.boss?.active && Math.abs(rock.root.position.x)<7) rock.root.position.x=(this.rng()<.5?-1:1)*(9+this.rng()*12);
@@ -244,11 +271,13 @@ export class Game {
   start(mode: RunMode = this.run.mode): void {
     this.run = createRun(mode); this.run.phase = 'flying';
     this.autoFire = true; this.roll.reset(); this.bankAngle = 0;
+    this.freeFlight.reset(); this.flightView='cockpit'; this.freeSectorMined=0;
     this.flightY = 0;
     this.cosmos?.setSector(1);
     this.rng = mulberry32(Date.now());
     this.ship.root.position.set(0, 0, 0); this.ship.root.rotation.set(0, 0, 0);
     this.cameraRig.reset(this.camera);
+    this.setFlightPresentation();
     this.velocity.set(0, 0); this.touchMove.set(0, 0); this.pointer.set(0, 0); this.keys.clear(); this.fireInput.clear();
     this.boostDrive.reset(); this.boostBlurPass.enabled=false;
     this.flightClock = this.invulnerable = 0; this.lastDamage = -20; this.flash = 0;
@@ -258,7 +287,7 @@ export class Game {
     this.expeditionProps.root.visible=mode==='endless';
     this.rocks.forEach((rock, i) => this.placeRock(rock, true, i));
     this.audio.start(); this.audio.setFlying(true);
-    this.hooks.phase(this); this.hooks.toast('Держите курс. Золотые жилы содержат руду.');
+    this.hooks.phase(this); this.hooks.toast(mode==='freeflight'?'Мышь — курс · W/S — тяга · A/D — смещение · C — камера':'Держите курс. Золотые жилы содержат руду.');
     this.renderer.domElement.focus({ preventScroll: true });
   }
 
@@ -270,11 +299,34 @@ export class Game {
 
   returnToMenu(): void {
     this.start();
-    this.run.phase='ready';this.audio.setFlying(false);this.hooks.phase(this);
+    this.run.phase='ready'; this.ship.root.position.set(0,0,0);this.ship.root.quaternion.identity();
+    this.cosmos?.root.position.set(0,0,0);this.cameraRig.reset(this.camera);
+    this.cockpit.root.visible=false;this.ship.root.visible=true;if(this.distantRocks)this.distantRocks.visible=true;
+    this.audio.setFlying(false);this.hooks.phase(this);
+  }
+
+  toggleFlightView(): void {
+    if(this.run.mode!=='freeflight' || !['flying','paused'].includes(this.run.phase)) return;
+    this.flightView=this.flightView==='cockpit'?'chase':'cockpit';
+    this.setFlightPresentation(); this.hooks.update(this);
+  }
+  private setFlightPresentation(): void {
+    const free=this.run.mode==='freeflight' && this.run.phase!=='ready';
+    this.cockpit.root.visible=free && this.flightView==='cockpit';
+    this.ship.root.visible=!this.cockpit.root.visible;
+    if(this.distantRocks)this.distantRocks.visible=!free;
+    if(free) this.freeFlight.resetCamera(this.camera,this.flightView);
+    else this.cosmos?.root.position.set(0,0,0);
+  }
+  /** Scanner coordinates follow the pilot's actual heading in free flight. */
+  navigationPoint(position:T.Vector3, result:T.Vector3): T.Vector3 {
+    result.copy(position).sub(this.ship.root.position);
+    return this.run.mode==='freeflight' ? result.applyQuaternion(this.navigationInverse.copy(this.freeFlight.heading).invert()) : result;
   }
 
   pause(): void {
     if (this.run.phase !== 'flying') return;
+    if(this.run.mode==='freeflight') this.pointer.set(0,0);
     this.run.phase = 'paused'; this.keys.clear(); this.touchMove.set(0, 0); this.fireInput.clear(); this.audio.setFlying(false); this.hooks.phase(this);
   }
   resume(): void { if (this.run.phase === 'paused') { this.run.phase = 'flying'; this.audio.start(); this.audio.setFlying(true); this.hooks.phase(this); } }
@@ -282,6 +334,7 @@ export class Game {
   openArmory(): void {
     if(!['flying','paused','upgrade'].includes(this.run.phase)) return;
     this.armoryReturn=this.run.phase as 'flying' | 'paused' | 'upgrade';
+    if(this.run.mode==='freeflight') this.pointer.set(0,0);
     this.run.phase='armory'; this.keys.clear(); this.touchMove.set(0,0); this.fireInput.clear();
     this.audio.setFlying(false); this.hooks.phase(this);
   }
@@ -322,6 +375,7 @@ export class Game {
   nextSector(): void {
     if (this.run.phase !== 'upgrade') return;
     this.run.sector=nextExpeditionSector(this.run.sector); this.run.sectorTime = 0; this.run.phase = 'flying';
+    this.freeSectorMined=this.run.mined;
     this.pirates.reset(); this.boss.reset(); this.combatTarget=null;
     this.cosmos?.setSector(visualSector(this.run.sector,this.run.mode));
     this.run.shield = this.run.maxShield;
@@ -341,6 +395,7 @@ export class Game {
       if (e.code === 'Escape' || e.code === 'KeyP') this.togglePause();
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.boost();
       if (e.code === 'KeyQ') this.toggleAutoFire();
+      if (e.code === 'KeyC') this.toggleFlightView();
       const weapon = WEAPON_ORDER.find(id => e.code === `Digit${WEAPONS[id].key}` || e.code === `Numpad${WEAPONS[id].key}`);
       if (weapon) this.selectWeapon(weapon);
       if (e.code === 'KeyU') { this.run.phase==='armory' ? this.closeArmory() : this.openArmory(); }
@@ -379,7 +434,11 @@ export class Game {
       this.ship.root.position.y = this.reducedMotion ? 0 : Math.sin(this.frameClock * .6) * .12;
       this.rocks.forEach(r => r.root.rotation.y += dt * .012);
     }
-    this.cameraRig.update(this.camera, this.ship.root.position.x, this.flightY, dt);
+    if(this.run.mode==='freeflight' && this.run.phase!=='ready') {
+      if(this.run.phase!=='flying') this.freeFlight.updateCamera(this.camera,dt,this.flightView);
+      this.cosmos?.root.position.copy(this.freeFlight.position);
+      this.cockpit.update({speed:this.freeFlight.speed,throttle:this.freeFlight.throttle,boost:this.boostTime>0,shield:this.run.shield/this.run.maxShield*100,hull:this.run.hull/this.run.maxHull*100,ore:this.run.ore});
+    } else this.cameraRig.update(this.camera, this.ship.root.position.x, this.flightY, dt);
     this.audio.setBoosting(this.run.phase==='flying' && this.boostTime>0);
     this.audio.setCutting(this.run.phase==='flying' && this.weapons.cutting);
     const blur=this.run.phase==='flying' && !this.reducedMotion ? boostEnvelope(this.boostTime) : 0;
@@ -399,6 +458,7 @@ export class Game {
   }
 
   private tickFlight(dt: number): void {
+    if(this.run.mode==='freeflight') { this.tickFreeFlight(dt); return; }
     this.flightClock += dt; this.run.elapsed += dt; this.run.sectorTime += dt;
     this.ship.root.updateMatrixWorld();
     this.shipFrameStart.copy(this.ship.root.matrixWorld);
@@ -463,6 +523,65 @@ export class Game {
         if (this.run.hull<=0) { this.finish(false); return; }
       }
     }
+    if (!this.updateCombat(dt, worldSpeed)) return;
+    if (canAdvanceSector(this.run.sector,this.run.sectorTime,this.boss.defeated,this.run.mode)) {
+      // A sector transfer finishes the tractor collection before the equipment bay opens.
+      this.salvage.collectAll(value => collectOre(this.run, value));
+      if (isExpeditionComplete(this.run.sector,this.run.sectorTime,this.boss.defeated,this.run.mode)) this.finish(true);
+      else { this.run.phase = 'upgrade'; this.keys.clear(); this.fireInput.clear(); this.weapons.stopCutting(); this.beam.hide(); this.audio.setCutting(false); this.audio.setFlying(false); this.audio.upgrade(); this.hooks.phase(this); }
+    }
+  }
+
+  private tickFreeFlight(dt: number): void {
+    this.flightClock += dt; this.run.elapsed += dt; this.run.sectorTime += dt;
+    this.ship.root.updateMatrixWorld(); this.shipFrameStart.copy(this.ship.root.matrixWorld);
+    this.invulnerable=Math.max(0,this.invulnerable-dt); this.boostDrive.update(dt,this.run.boostCooldown);
+    this.weapons.recharge=cutterRecharge(this.run.levels.laser); this.weapons.update(dt);
+    const keyboardX=Number(this.keys.has('ArrowRight'))-Number(this.keys.has('ArrowLeft'));
+    const keyboardY=Number(this.keys.has('ArrowUp'))-Number(this.keys.has('ArrowDown'));
+    this.freeFlight.update(dt, {
+      steerX:keyboardX || this.pointer.x, steerY:keyboardY || this.pointer.y,
+      strafe:Number(this.keys.has('KeyD'))-Number(this.keys.has('KeyA')),
+      throttle:Number(this.keys.has('KeyW'))-Number(this.keys.has('KeyS')),
+      boost:this.boostTime>0, speed:36+(Math.min(this.run.sector,6)-1)*4,
+    });
+    const roll=this.roll.update(dt);
+    this.tmp.set(roll.lateral,0,0).applyQuaternion(this.freeFlight.heading);
+    this.freeFlight.position.add(this.tmp);
+    this.ship.root.position.copy(this.freeFlight.position);
+    this.ship.root.quaternion.copy(this.freeFlight.heading).multiply(this.cosmeticRoll.setFromAxisAngle(this.rollAxis,
+      (this.reducedMotion?roll.bank:roll.angle)+this.freeFlight.bank));
+    this.ship.root.updateMatrixWorld(); this.shipCollider.setMotion(this.shipFrameStart,this.ship.root.matrixWorld);
+    this.freeFlight.updateCamera(this.camera,dt,this.flightView);
+    if(this.flightClock-this.lastDamage>5) this.run.shield=Math.min(this.run.maxShield,this.run.shield+dt*4);
+    for(const rock of this.rocks) {
+      if(rock.wait>0) { rock.wait-=dt; if(rock.wait<=0) this.placeRock(rock); continue; }
+      (rock.previousPosition ??= new T.Vector3()).copy(rock.root.position);
+      if(rock.root.position.distanceToSquared(this.freeFlight.position)>340*340) { this.placeRock(rock); continue; }
+      rock.root.rotation.x+=rock.spin.x*dt; rock.root.rotation.y+=rock.spin.y*dt;
+      if(this.invulnerable<=0 && this.shipCollider.intersectsRock(rock.root.position,rock.root.position,rock.radius*.93)) {
+        this.hurtShip((rock.kind==='volatile'?42:rock.kind==='armored'?34:22)+rock.radius*3,
+          rock.kind==='volatile'?'Взрывной астероид':'Столкновение');
+        this.effects.burst(rock.root.position,new T.Color(1,.36,.08),28,8);
+        if(rock.kind==='volatile') this.effects.shockwave(rock.root.position,blastRadius(rock.radius),0xff4f27);
+        this.hideRock(rock);
+        if(this.run.hull<=0) { this.finish(false); return; }
+      }
+    }
+    if(!this.updateCombat(dt,0)) return;
+    if(this.freeMiningProgress>=this.freeMiningQuota) {
+      this.salvage.collectAll(value=>collectOre(this.run,value));
+      if(this.run.sector>=TOTAL_SECTORS) this.finish(true);
+      else {
+        this.run.phase='upgrade'; this.keys.clear(); this.pointer.set(0,0); this.fireInput.clear();
+        this.weapons.stopCutting(); this.beam.hide(); this.audio.setCutting(false); this.audio.setFlying(false);
+        this.audio.upgrade(); this.hooks.phase(this);
+      }
+    }
+  }
+
+  private updateCombat(dt: number, worldSpeed: number): boolean {
+    const pos=this.ship.root.position;
     this.updateTarget();
     const attack = this.weapons.fire(this.run.fireInterval, this.shooting, this.autoFire,
       (!!this.target && this.target.root.position.distanceTo(pos)<=CUTTER_RANGE+this.target.radius)
@@ -476,42 +595,44 @@ export class Game {
       this.effects.shockwave(position, missile ? SEEKER_BLAST_RADIUS : PLASMA_RADIUS, missile ? 0x99e5ad : 0xb49cff);
       this.effects.burst(position, missile ? new T.Color(.7, 2, .9) : new T.Color(1.1, .7, 3), missile ? 12 : 30, missile ? 4 : 8);
     }, () => this.run.hull > 0, {targets:this.combatTargets(),hit:(target,damage,position)=>this.hitHostile(target,damage,position)});
-    if (this.run.hull <= 0) { this.finish(false); return; }
+    if (this.run.hull <= 0) { this.finish(false); return false; }
     if (this.weapons.cutting) this.beam.update(this.ship.muzzles, this.nearestTarget(), this.rocks,
       (rock, direction) => this.breakRock(rock, direction), () => this.run.hull > 0,
       {targets:this.combatTargets(),hit:(target,damage,position)=>this.hitHostile(target,damage,position)}, weaponDamage('cutter', this.run.damage)*dt);
     else this.beam.hide();
-    if (this.run.hull <= 0) { this.finish(false); return; }
+    if (this.run.hull <= 0) { this.finish(false); return false; }
     this.salvage.update(dt, worldSpeed, this.ship.root.position, this.run.magnet, (value, position) => {
       collectOre(this.run, value);
       if (this.flightClock - this.lastPickupSound > .07) { this.audio.pickup(); this.lastPickupSound = this.flightClock; }
       this.effects.burst(position, new T.Color(1, .7, .24), 3, 1.5);
-    });
+    }, this.run.mode==='freeflight');
     this.effects.update(dt);
-    if (canAdvanceSector(this.run.sector,this.run.sectorTime,this.boss.defeated,this.run.mode)) {
-      // A sector transfer finishes the tractor collection before the equipment bay opens.
-      this.salvage.collectAll(value => collectOre(this.run, value));
-      if (isExpeditionComplete(this.run.sector,this.run.sectorTime,this.boss.defeated,this.run.mode)) this.finish(true);
-      else { this.run.phase = 'upgrade'; this.keys.clear(); this.fireInput.clear(); this.weapons.stopCutting(); this.beam.hide(); this.audio.setCutting(false); this.audio.setFlying(false); this.audio.upgrade(); this.hooks.phase(this); }
-    }
+    return true;
   }
 
   private nearestTarget(): T.Vector3 {
-    this.ray.setFromCamera(this.pointer, this.camera);
+    this.ray.setFromCamera(this.run.mode==='freeflight'?this.centeredAim:this.pointer, this.camera);
     this.aimPoint.copy(this.ray.ray.direction).multiplyScalar(220).add(this.ray.ray.origin);
     let nearest = Infinity;
     for (const rock of this.rocks) {
-      if (rock.wait > 0 || rock.root.position.z > this.ship.root.position.z - 5) continue;
+      if (rock.wait > 0 || (this.run.mode!=='freeflight' && rock.root.position.z > this.ship.root.position.z - 5)) continue;
       this.raySphere.center.copy(rock.root.position); this.raySphere.radius = rock.radius * 1.02;
       const hit = this.ray.ray.intersectSphere(this.raySphere, this.tmp);
-      if (hit) { const distance = hit.distanceToSquared(this.ray.ray.origin); if (distance < nearest) { nearest = distance; this.aimPoint.copy(hit); } }
+      if (hit && (this.run.mode!=='freeflight' || this.isAheadOfMuzzles(hit))) { const distance = hit.distanceToSquared(this.ray.ray.origin); if (distance < nearest) { nearest = distance; this.aimPoint.copy(hit); } }
     }
     for (const target of this.combatTargets()) {
       this.raySphere.center.copy(target.position); this.raySphere.radius=target.radius;
       const hit=this.ray.ray.intersectSphere(this.raySphere,this.tmp);
-      if (hit) { const distance=hit.distanceToSquared(this.ray.ray.origin); if(distance<nearest) {nearest=distance;this.aimPoint.copy(hit);} }
+      if (hit && (this.run.mode!=='freeflight' || this.isAheadOfMuzzles(hit))) { const distance=hit.distanceToSquared(this.ray.ray.origin); if(distance<nearest) {nearest=distance;this.aimPoint.copy(hit);} }
     }
     return this.aimPoint;
+  }
+
+  private isAheadOfMuzzles(point:T.Vector3):boolean {
+    // Chase rays start behind the pilot; a visible rock must still be ahead of the cannons.
+    this.tmp2.copy(point).sub(this.ship.root.position)
+      .applyQuaternion(this.navigationInverse.copy(this.freeFlight.heading).invert());
+    return this.tmp2.z < -3.7;
   }
 
   private fire(weapon: WeaponId): void {
@@ -519,7 +640,7 @@ export class Game {
     const targets: CombatTarget[] = [...this.pirates.targets];
     if (this.boss.target) targets.push(this.boss.target);
     this.projectiles.fire(this.ship.muzzles, this.nearestTarget(), this.run.multishot,
-      { kind: weapon, damage: weaponDamage(weapon, this.run.damage), targets });
+      { kind: weapon, damage: weaponDamage(weapon, this.run.damage), targets, heading:this.run.mode==='freeflight'?this.freeFlight.heading:undefined });
     if (weapon === 'plasma') this.audio.plasma();
     else if (weapon === 'scatter') this.audio.tone(840, 130, .12, .05, 'sawtooth');
     else if (weapon === 'seeker') this.audio.tone(120, 550, .2, .06, 'triangle');
@@ -562,18 +683,18 @@ export class Game {
     this.target = null;
     this.combatTarget = null;
     if (this.run.phase !== 'flying') return;
-    this.ray.setFromCamera(this.pointer, this.camera); let nearest = Infinity;
+    this.ray.setFromCamera(this.run.mode==='freeflight'?this.centeredAim:this.pointer, this.camera); let nearest = Infinity;
     for (const r of this.rocks) {
-      if (r.wait > 0 || r.root.position.z > -5) continue;
+      if (r.wait > 0 || (this.run.mode!=='freeflight' && r.root.position.z > -5)) continue;
       this.raySphere.center.copy(r.root.position); this.raySphere.radius = r.radius * 1.15;
-      if (this.ray.ray.intersectSphere(this.raySphere, this.tmp)) {
+      if (this.ray.ray.intersectSphere(this.raySphere, this.tmp) && (this.run.mode!=='freeflight' || this.isAheadOfMuzzles(this.tmp))) {
         const distance = this.tmp.distanceToSquared(this.camera.position); if (distance < nearest) { nearest = distance; this.target = r; }
       }
     }
     for (const target of this.combatTargets()) {
-      if (target.position.z>-5) continue;
+      if (this.run.mode!=='freeflight' && target.position.z>-5) continue;
       this.raySphere.center.copy(target.position); this.raySphere.radius=target.radius*1.08;
-      if(this.ray.ray.intersectSphere(this.raySphere,this.tmp)) {
+      if(this.ray.ray.intersectSphere(this.raySphere,this.tmp) && (this.run.mode!=='freeflight' || this.isAheadOfMuzzles(this.tmp))) {
         const distance=this.tmp.distanceToSquared(this.camera.position);
         if(distance<nearest) {nearest=distance;this.target=null;this.combatTarget=target;}
       }
@@ -591,7 +712,7 @@ export class Game {
   }
   get dangerNearby(): boolean {
     return this.run.phase === 'flying' && this.rocks.some(rock => rock.wait <= 0 && rock.kind === 'volatile'
-      && rock.root.position.z < 5 && rock.root.position.distanceTo(this.ship.root.position) < blastRadius(rock.radius) + 7);
+      && (this.run.mode==='freeflight' || rock.root.position.z < 5) && rock.root.position.distanceTo(this.ship.root.position) < blastRadius(rock.radius) + 7);
   }
   get damageFlash(): number { return this.flash; }
   get oreCount(): number { return this.salvage.count; }
