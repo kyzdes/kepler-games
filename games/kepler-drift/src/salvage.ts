@@ -56,7 +56,7 @@ export class Salvage {
     }
   }
 
-  update(dt: number, worldSpeed: number, ship: T.Vector3, magnet: number, onPickup: (value: number, position: T.Vector3) => void): void {
+  update(dt: number, worldSpeed: number, ship: T.Vector3, magnet: number, onPickup: (value: number, position: T.Vector3) => void, freeFlight = false): void {
     for (let i = this.ores.length - 1; i >= 0; i--) {
       const ore = this.ores[i];
       ore.life -= dt;
@@ -64,6 +64,8 @@ export class Salvage {
       const distance = this.direction.length();
       if (distance < magnet) {
         ore.velocity.lerp(this.direction.normalize().multiplyScalar(22 + (magnet - distance) * 1.2), 1 - Math.exp(-dt * 4));
+      } else if (freeFlight) {
+        ore.velocity.multiplyScalar(Math.exp(-dt * .7));
       } else {
         ore.velocity.z += (worldSpeed - ore.velocity.z) * dt * .5;
       }
@@ -74,7 +76,7 @@ export class Salvage {
         onPickup(ore.value, ore.mesh.position);
         ore.life = 0;
       }
-      if (ore.life <= 0 || ore.mesh.position.z > 25) {
+      if (ore.life <= 0 || (!freeFlight && ore.mesh.position.z > 25)) {
         this.scene.remove(ore.mesh);
         this.ores.splice(i, 1);
       }

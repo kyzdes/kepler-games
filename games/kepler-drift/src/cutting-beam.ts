@@ -47,14 +47,14 @@ export class CuttingBeam {
       ray.position.copy(this.start).lerp(this.end, .5);
       ray.quaternion.setFromUnitVectors(UP, this.direction);
       for (const rock of rocks) {
-        if (rock.wait > 0 || rock.root.position.z > this.start.z) continue;
+        if (rock.wait > 0) continue;
         const p = rock.root.position;
         const time = segmentSphereHit(this.start.x, this.start.y, this.start.z,
           this.end.x, this.end.y, this.end.z, p.x, p.y, p.z, rock.radius * .93 + CUTTER_WIDTH);
         if (time !== null) hits.set(rock, Math.min(hits.get(rock) ?? Infinity, time));
       }
       for (const target of combat?.targets ?? []) {
-        if (!target.active || target.position.z > this.start.z) continue;
+        if (!target.active) continue;
         const p=target.position;
         if (segmentSphereHit(this.start.x,this.start.y,this.start.z,this.end.x,this.end.y,this.end.z,p.x,p.y,p.z,target.radius+CUTTER_WIDTH)!==null) hostiles.add(target);
       }

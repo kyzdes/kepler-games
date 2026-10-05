@@ -1,6 +1,6 @@
 import { flightSpeed, SECTOR_SECONDS, TOTAL_SECTORS } from './state.ts';
 
-export type RunMode = 'expedition' | 'endless';
+export type RunMode = 'expedition' | 'endless' | 'freeflight';
 export const BOSS_ARRIVAL_SECONDS = 50;
 export const MAX_FORWARD_SPEED = 52;
 export const MAX_RUN_SECTOR = 1_000_000;
@@ -33,8 +33,11 @@ export function cappedForwardSpeed(sector: number, sectorTime: number): number {
 
 export function bossScheduled(sector: number, mode: RunMode = 'expedition'): boolean {
   const current = validSector(sector);
-  return current % 3 === 0 && (mode === 'endless' || current <= TOTAL_SECTORS);
+  return mode !== 'freeflight' && current % 3 === 0 && (mode === 'endless' || current <= TOTAL_SECTORS);
 }
+
+/** Free flight completes mining contracts instead of advancing on a timer. */
+export function freeFlightQuota(sector: number): number { return 40 + (worldSector(sector) - 1) * 20; }
 
 /** Call once per sector, guarded by the encounter's active/defeated state. */
 export function shouldSpawnBoss(sector: number, sectorTime: number, mode: RunMode = 'expedition'): boolean {
@@ -42,7 +45,7 @@ export function shouldSpawnBoss(sector: number, sectorTime: number, mode: RunMod
 }
 
 export function canAdvanceSector(sector: number, sectorTime: number, bossDefeated: boolean, mode: RunMode = 'expedition'): boolean {
-  return sectorTime >= SECTOR_SECONDS && (!bossScheduled(sector, mode) || bossDefeated);
+  return mode !== 'freeflight' && sectorTime >= SECTOR_SECONDS && (!bossScheduled(sector, mode) || bossDefeated);
 }
 
 export function isExpeditionComplete(sector: number, sectorTime: number, bossDefeated: boolean, mode: RunMode = 'expedition'): boolean {

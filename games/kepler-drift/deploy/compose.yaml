@@ -1,0 +1,49 @@
+services:
+  web:
+    image: nginxinc/nginx-unprivileged@sha256:4714e0b1b2577eaa1a6131d07c958b67f0eb68e6d0521e90c6e5287db8cf0bc5
+    restart: unless-stopped
+    entrypoint: ["nginx"]
+    command: ["-g", "daemon off;"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.50
+    pids_limit: 64
+    volumes:
+      - ${ASTEROID_RELEASE:?Set the release directory}/dist:/usr/share/nginx/html:ro
+      - ${ASTEROID_RELEASE:?Set the release directory}/deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - dokploy-network
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/healthz]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: dokploy-network
+      traefik.http.routers.asteroid-game-http.rule: Host(`asteroid.moone.dev`)
+      traefik.http.routers.asteroid-game-http.entrypoints: web
+      traefik.http.routers.asteroid-game-http.middlewares: asteroid-game-https
+      traefik.http.middlewares.asteroid-game-https.redirectscheme.scheme: https
+      traefik.http.middlewares.asteroid-game-https.redirectscheme.permanent: "true"
+      traefik.http.routers.asteroid-game.rule: Host(`asteroid.moone.dev`)
+      traefik.http.routers.asteroid-game.entrypoints: websecure
+      traefik.http.routers.asteroid-game.tls: "true"
+      traefik.http.routers.asteroid-game.tls.certresolver: letsencrypt
+      traefik.http.routers.asteroid-game.service: asteroid-game
+      traefik.http.services.asteroid-game.loadbalancer.server.port: "8080"
+
+networks:
+  dokploy-network:
+    external: true

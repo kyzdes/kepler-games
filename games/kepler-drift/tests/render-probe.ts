@@ -15,7 +15,7 @@ await game.init();
 game.renderer.setAnimationLoop(null);
 const initialSamples = game.composer.renderTarget1.samples;
 const gl = game.renderer.getContext();
-const atmosphere = game as unknown as { cosmos: { update(dt: number): void; setSector(sector:number): void } };
+const atmosphere = game as unknown as { cosmos: { root:T.Group; update(dt: number): void; setSector(sector:number): void } };
 const blur=game as unknown as { boostBlurPass: {enabled:boolean; uniforms:{strength:{value:number}}} };
 const simulation=game as unknown as {tickFlight(dt:number):void; asteroidVisuals:{apply(rock:Game['rocks'][number]):void};
   invulnerable:number;projectiles:{count:number}};
@@ -137,15 +137,42 @@ async function measure(mode: ProbeMode): Promise<void> {
     const error=gl.getError();if(error)encounterErrors.push(error);
   }
   game.fireInput.clear();game.pause();
+  const bossEvidence={startHP:bossStartHP,hp:game.boss.battery.hp,beamFrames:bossBeamFrames,label:game.boss.bodyTarget?.label};
+  const freeMeans:number[]=[],freeErrors:number[]=[];
+  const freeScenes:{sector:number;view:string;frames:number;minMean:number}[]=[];
+  for(let sector=1;sector<=6;sector++) for(const view of ['cockpit','chase'] as const) {
+    game.start('freeflight');game.autoFire=false;game.run.sector=sector;simulation.invulnerable=999;
+    atmosphere.cosmos.setSector(sector);game.rocks.forEach(rock=>{rock.wait=999;rock.root.visible=false;});
+    if(view==='chase')game.toggleFlightView();
+    const localMeans:number[]=[];
+    for(let frame=0;frame<30;frame++) {
+      await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+      game.pointer.set(Math.sin(frame*.08)*.4,Math.sin(frame*.04)*.16);
+      if(frame===5)game.boost();
+      simulation.tickFlight(1/60);atmosphere.cosmos.root.position.copy(game.freeFlight.position);
+      atmosphere.cosmos.update(1/60);blur.boostBlurPass.enabled=game.boostTime>0;blur.boostBlurPass.uniforms.strength.value=1;
+      game.composer.render();
+      const width=gl.drawingBufferWidth,pixels=new Uint8Array(width*4);let total=0;
+      for(const y of [.35,.55,.75]) {
+        gl.readPixels(0,Math.floor(gl.drawingBufferHeight*y),width,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+        for(let i=0;i<pixels.length;i+=4)total+=(pixels[i]+pixels[i+1]+pixels[i+2])/3;
+      }
+      const mean=total/(width*3);freeMeans.push(mean);localMeans.push(mean);
+      const error=gl.getError();if(error)freeErrors.push(error);
+    }
+    freeScenes.push({sector,view,frames:localMeans.length,minMean:Number(Math.min(...localMeans).toFixed(2))});
+  }
+  game.pause();blur.boostBlurPass.enabled=false;
   // A stable black image must fail too: bloom alone can survive while the
   // sky, planet and ship are discarded. Three scanlines cover that distinction.
   const passed = drops === 0 && Math.min(...means) >= 15 && errors.length === 0 && centerDelta<.1 && edgeDelta>.1
     && Math.min(...weaponMeans)>=15 && weaponErrors.length===0 && weaponKills>=3
     && weaponScenes.length===WEAPON_ORDER.length && weaponScenes.every(scene=>scene.selected && scene.activeFrames>0)
     && Math.min(...encounterMeans)>=15 && encounterErrors.length===0
-    && bossBeamFrames>0 && game.boss.battery.hp>0 && bossStartHP-game.boss.battery.hp>100;
+    && bossEvidence.beamFrames>0 && bossEvidence.hp>0 && bossEvidence.startHP-bossEvidence.hp>100
+    && Math.min(...freeMeans)>=15 && freeErrors.length===0;
   result.textContent = JSON.stringify({
-    passed, mode, frames: means.length, totalFrames:means.length+weaponMeans.length+encounterMeans.length,
+    passed, mode, frames: means.length, totalFrames:means.length+weaponMeans.length+encounterMeans.length+freeMeans.length,
     msaaSamples: game.composer.renderTarget1.samples,
     brightnessDrops: drops, minMean: Math.min(...means), maxMean: peak,
     sectors: Array.from({length:SECTOR_VISUALS.length},(_,i)=>({sector:i+1,minMean:Math.min(...means.slice(i*60,i*60+60)),maxMean:Math.max(...means.slice(i*60,i*60+60))})),
@@ -154,7 +181,8 @@ async function measure(mode: ProbeMode): Promise<void> {
     weapons:{frames:weaponMeans.length,minMean:Number(Math.min(...weaponMeans).toFixed(2)),glErrors:weaponErrors,
       kills:weaponKills,beamRemaining:game.weapons.remaining,scenes:weaponScenes},
     encounters:{frames:encounterMeans.length,minMean:Number(Math.min(...encounterMeans).toFixed(2)),glErrors:encounterErrors,
-      boss:{startHP:bossStartHP,hp:game.boss.battery.hp,beamFrames:bossBeamFrames,label:game.boss.bodyTarget?.label}},
+      boss:bossEvidence},
+    freeFlight:{frames:freeMeans.length,minMean:Number(Math.min(...freeMeans).toFixed(2)),glErrors:freeErrors,scenes:freeScenes},
     assumptions:{arsenal:'all weapons explicitly unlocked for staged graphics only',boss:'real exposure after 7.7 seconds; no forced phase',balanceClaim:false},
   }, null, 2);
   result.dataset.complete='true';
